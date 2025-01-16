@@ -22,31 +22,61 @@ CUSTOM_STOPS = {
 # Enhanced seed topics with more distinctive words
 SEED_TOPICS = {
     'mortality_reports': [
-        'death', 'died', 'mortality', 'deceased', 'fatality',
-        'casualties', 'deaths', 'toll', 'register', 'record',
-        'statistics', 'weekly', 'monthly', 'reported', 'total'
+        # Core mortality terms
+        'mortality', 'deaths', 'deceased', 'casualties', 'fatalities',
+        # Statistical indicators
+        'weekly', 'monthly', 'annual', 'register', 'statistics',
+        # Reporting terms
+        'reported', 'recorded', 'certified', 'enumerated', 'total',
+        # Demographic specifics
+        'infant', 'adult', 'aged', 'children', 'population'
     ],
+    
     'public_health': [
-        'health', 'disease', 'epidemic', 'outbreak', 'infection',
-        'prevention', 'sanitary', 'quarantine', 'vaccination', 'hospital',
-        'physician', 'medical', 'treatment', 'cure', 'board'
+        # Health measures
+        'vaccination', 'inoculation', 'prevention', 'quarantine', 'isolation',
+        # Medical authority
+        'physician', 'doctor', 'surgeon', 'hospital', 'board',
+        # Public action
+        'notice', 'warning', 'advisory', 'proclamation', 'announcement',
+        # Health infrastructure
+        'clinic', 'dispensary', 'infirmary', 'ward', 'asylum'
     ],
-    'vital_statistics': [
-        'birth', 'marriage', 'census', 'population', 'registry',
-        'records', 'rate', 'increase', 'decrease', 'annual',
-        'estimate', 'official', 'report', 'survey', 'count'
+    
+    'editorial_commentary': [
+        # Analysis terms
+        'opinion', 'editorial', 'review', 'observation', 'commentary',
+        # Impact assessment
+        'impact', 'effect', 'consequence', 'influence', 'result',
+        # Social response
+        'public', 'community', 'society', 'citizens', 'residents',
+        # Evaluation terms
+        'consider', 'examine', 'assess', 'investigate', 'debate'
     ],
-    'death_notices': [
-        'funeral', 'burial', 'cemetery', 'survived', 'bereaved',
-        'mourning', 'memorial', 'obituary', 'passed', 'age',
-        'resident', 'family', 'leaves', 'services', 'arrangements'
+    
+    'disease_context': [
+        # Other diseases
+        'fever', 'cholera', 'consumption', 'plague', 'influenza',
+        # Disease characteristics
+        'contagious', 'infectious', 'epidemic', 'outbreak', 'spread',
+        # Symptoms
+        'symptoms', 'condition', 'affliction', 'illness', 'malady',
+        # Treatment
+        'treatment', 'remedy', 'cure', 'medicine', 'prescription'
     ],
-    'disease_specific': [
-        'consumption', 'fever', 'smallpox', 'cholera', 'typhoid',
-        'tuberculosis', 'influenza', 'diphtheria', 'plague', 'pneumonia',
-        'measles', 'scarlet', 'dysentery', 'whooping', 'malaria'
+    
+    'historical_reference': [
+        # Temporal markers
+        'previous', 'former', 'past', 'historical', 'earlier',
+        # Reference terms
+        'record', 'account', 'document', 'chronicle', 'report',
+        # Comparative terms
+        'comparison', 'similar', 'pattern', 'trend', 'recurring',
+        # Memory terms
+        'remembered', 'recalled', 'documented', 'recorded', 'preserved'
     ]
 }
+
 class TemporalLDAAnalyzer:
     def __init__(self, window_size: int = 5):
         self.window_size = window_size
@@ -278,10 +308,10 @@ def main():
     nltk.download('wordnet')
 
     # Initialize analyzer
-    analyzer = TemporalLDAAnalyzer(window_size=5)
+    analyzer = TemporalLDAAnalyzer(window_size=1)
 
     # Load the dataset for a range of years
-    years = list(range(1880, 1884))  # Modify year range as needed
+    years = list(range(1880, 1882))  # Modify year range as needed
     dataset = load_dataset("dell-research-harvard/AmericanStories",
                           "subset_years",
                           year_list=[str(year) for year in years])
