@@ -262,10 +262,10 @@ def main():
     nltk.download('wordnet')
     
     # Initialize analyzer with parallel processing
-    analyzer = TemporalLDAAnalyzer(window_size=1)
+    analyzer = TemporalLDAAnalyzer(window_size=5)
 
     # Load the dataset for a range of years
-    years = list(range(1880, 1882))
+    years = list(range(1800, 1830))
     dataset = load_dataset("dell-research-harvard/AmericanStories",
                           "subset_years",
                           year_list=[str(year) for year in years])

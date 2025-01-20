@@ -1,0 +1,42 @@
+import pandas as pd
+
+df=pd.read_csv('/Users/labuser/Documents/Newspaper/cooccurrence_analysis_1829_5.csv')
+
+print(df.shape[0])
+print(df[df.topic_1_prob > .5].shape[0]/df.shape[0])
+print(df[df.topic_2_prob > .5].shape[0]/df.shape[0])
+print(df[df.topic_3_prob > .5].shape[0]/df.shape[0])
+print(df[df.topic_4_prob > .5].shape[0]/df.shape[0])
+print(df[df.topic_5_prob > .5].shape[0]/df.shape[0])
+
+
+"""
+00
+0.5111111111111111
+0.044444444444444446
+0.0
+0.044444444444444446
+0.06666666666666667
+
+10
+0.18635437881873726
+0.33706720977596744
+0.17617107942973523
+0.1354378818737271
+0.08961303462321792
+
+20
+0.21478060046189376
+0.3325635103926097
+0.06928406466512702
+0.02771362586605081
+0.13856812933025403
+
+
+2296
+0.23693379790940766
+0.2465156794425087
+0.06184668989547038
+0.04006968641114982
+0.20557491289198607
+"""

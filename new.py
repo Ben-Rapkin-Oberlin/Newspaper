@@ -239,7 +239,8 @@ def analyze_cooccurrences(text: str, window_size: int = 10) -> int:
                 
     return cooccurrences
 
-def process_yearly_data(dataset, year: str, model: models.LdaModel, dictionary: corpora.Dictionary, analyzer: TemporalLDAAnalyzer) -> pd.DataFrame:
+def process_yearly_data(dataset, year: str, model: models.LdaModel, 
+    dictionary: corpora.Dictionary, analyzer: TemporalLDAAnalyzer, window) -> pd.DataFrame:
     """
     Process articles for a given year and create a DataFrame with co-occurrences and topic distributions.
     
@@ -295,7 +296,7 @@ def process_yearly_data(dataset, year: str, model: models.LdaModel, dictionary: 
     df = pd.DataFrame(results)
     
     # Save to CSV
-    output_file = f'cooccurrence_analysis_{year}.csv'
+    output_file = f'cooccurrence_analysis_{year}_{window}.csv'
     df.to_csv(output_file, index=False)
     
     return df
@@ -308,10 +309,11 @@ def main():
     nltk.download('wordnet')
 
     # Initialize analyzer
-    analyzer = TemporalLDAAnalyzer(window_size=1)
+    window_size=5
+    analyzer = TemporalLDAAnalyzer(window_size=window_size)
 
     # Load the dataset for a range of years
-    years = list(range(1880, 1882))  # Modify year range as needed
+    years = list(range(1830, 1834))  # Modify year range as needed
     dataset = load_dataset("dell-research-harvard/AmericanStories",
                           "subset_years",
                           year_list=[str(year) for year in years])
@@ -355,7 +357,7 @@ def main():
         dictionary = analyzer.dictionaries[window_start]
         
         # Process the year's data
-        year_df = process_yearly_data(dataset[year_str], year_str, model, dictionary, analyzer)
+        year_df = process_yearly_data(dataset[year_str], year_str, model, dictionary, analyzer, window_size)
         print(f"Processed {len(year_df)} articles for {year_str}")
         
 if __name__ == '__main__':
