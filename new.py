@@ -77,6 +77,27 @@ SEED_TOPICS = {
     ]
 }
 
+
+def get_top_words_per_topic(model: models.LdaModel, num_words: int = 5) -> Dict[int, List[str]]:
+    """
+    Extract top N words for each topic from the LDA model.
+    
+    Args:
+        model (models.LdaModel): Trained LDA model
+        num_words (int): Number of top words to extract per topic
+        
+    Returns:
+        Dict[int, List[str]]: Dictionary mapping topic indices to their top words
+    """
+    top_words = {}
+    for topic_idx in range(model.num_topics):
+        # Get topic terms with probabilities
+        topic_terms = model.show_topic(topic_idx, num_words)
+        # Extract just the words (without probabilities)
+        words = [term[0] for term in topic_terms]
+        top_words[topic_idx] = words
+    return top_words
+    
 class TemporalLDAAnalyzer:
     def __init__(self, window_size: int = 5):
         self.window_size = window_size
@@ -147,12 +168,12 @@ class TemporalLDAAnalyzer:
             corpus=corpus,
             id2word=dictionary,
             num_topics=num_topics,
-            passes=100,
+            passes=10,
             alpha='asymmetric',
             eta=eta,
             random_state=42,
             chunksize=2000,
-            iterations=500
+            iterations=50
         )
         
         # Calculate coherence
@@ -209,77 +230,91 @@ class TemporalLDAAnalyzer:
         
         return topic_evolution
 
-def analyze_cooccurrences(text: str, window_size: int = 10) -> int:
+def analyze_cooccurrences_multi(text: str, target_words: List[str], window_size: int = 10) -> Dict[str, int]:
     """
-    Count co-occurrences of 'smallpox' and 'death' within a specified word window.
+    Count co-occurrences of 'smallpox' with multiple target words AND 'death' within a specified window.
     
     Args:
         text (str): Input text to analyze
+        target_words (List[str]): List of words to check for co-occurrence with 'smallpox'
         window_size (int): Number of words to consider for co-occurrence window
         
     Returns:
-        int: Number of co-occurrences found
+        Dict[str, int]: Dictionary mapping target words to their co-occurrence counts, plus 'death' count
     """
     # Tokenize the text
     words = word_tokenize(text.lower())
     
-    # Find all positions of target words
+    # Find all positions of smallpox
     smallpox_positions = [i for i, word in enumerate(words) if word == 'smallpox']
-    death_positions = [i for i, word in enumerate(words) if word in ['death', 'deaths']]
     
-    # Count co-occurrences within window
-    cooccurrences = 0
+    # Initialize co-occurrence counts for all target words plus 'death'
+    cooccurrences = {word: 0 for word in target_words}
+    cooccurrences['death'] = 0  # Add specific death counter
+    
+    # Count co-occurrences for each target word and death
     for sp_pos in smallpox_positions:
         window_start = max(0, sp_pos - window_size)
         window_end = min(len(words), sp_pos + window_size + 1)
         
-        for death_pos in death_positions:
-            if window_start <= death_pos <= window_end:
-                cooccurrences += 1
+        # Check window for each target word
+        window_text = words[window_start:window_end]
+        
+        # Check for death/deaths specifically
+        if 'death' in window_text or 'deaths' in window_text:
+            cooccurrences['death'] += 1
+            
+        # Check for other target words
+        for target_word in target_words:
+            if target_word in window_text:
+                cooccurrences[target_word] += 1
                 
     return cooccurrences
-
+    
+    
 def process_yearly_data(dataset, year: str, model: models.LdaModel, 
-    dictionary: corpora.Dictionary, analyzer: TemporalLDAAnalyzer, window) -> pd.DataFrame:
+    dictionary: corpora.Dictionary, analyzer: TemporalLDAAnalyzer, window: int) -> pd.DataFrame:
     """
     Process articles for a given year and create a DataFrame with co-occurrences and topic distributions.
-    
-    Args:
-        dataset: The loaded dataset for the specific year
-        year (str): Year being processed
-        model (models.LdaModel): Trained LDA model
-        dictionary (corpora.Dictionary): Dictionary for the model
-        analyzer (TemporalLDAAnalyzer): Instance of the analyzer class
-        
-    Returns:
-        pd.DataFrame: DataFrame with article statistics and topic distributions
     """
+    # Get top words for each topic
+    top_words_dict = get_top_words_per_topic(model)
+    
+    # Create flat list of all top words
+    all_top_words = []
+    for topic_words in top_words_dict.values():
+        all_top_words.extend(topic_words)
+    
     # Initialize lists to store results
     results = []
     
     # Process each article
     for article in dataset:
-        # Get article text and ID
         text = article['article']
         article_id = article['article_id']
         
         # Count words
         word_count = len(word_tokenize(text))
         
-        # Count co-occurrences
-        cooccurrences = analyze_cooccurrences(text)
-        
-        # Get topic distribution
-        preprocessed_text = analyzer.preprocess_text(text)
-        bow = dictionary.doc2bow(preprocessed_text)
-        topic_dist = model.get_document_topics(bow)
+        # Get co-occurrences with all top words and death
+        cooccurrences = analyze_cooccurrences_multi(text, all_top_words)
         
         # Create result dictionary
         result = {
             'id': article_id,
             'word_count': word_count,
-            'cooccurrences': cooccurrences
+            'smallpox_death_cooccurrences': cooccurrences['death']  # Add the death co-occurrence count
         }
+        
+        # Add co-occurrence counts for topic words
+        for topic_idx, topic_words in top_words_dict.items():
+            for word in topic_words:
+                result[f'cooccur_topic{topic_idx+1}_{word}'] = cooccurrences[word]
+        
+        # Get topic distribution
+        preprocessed_text = analyzer.preprocess_text(text)
+        bow = dictionary.doc2bow(preprocessed_text)
+        topic_dist = model.get_document_topics(bow)
         
         # Add topic probabilities
         for topic_idx in range(len(SEED_TOPICS)):
@@ -305,6 +340,7 @@ def process_yearly_data(dataset, year: str, model: models.LdaModel,
 def main():
     # Download required NLTK data
     nltk.download('punkt')
+    nltk.download('punkt_tab')
     nltk.download('stopwords')
     nltk.download('wordnet')
 
@@ -313,10 +349,11 @@ def main():
     analyzer = TemporalLDAAnalyzer(window_size=window_size)
 
     # Load the dataset for a range of years
-    years = list(range(1830, 1834))  # Modify year range as needed
+    years = list(range(1800, 1809))  # Modify year range as needed
     dataset = load_dataset("dell-research-harvard/AmericanStories",
                           "subset_years",
-                          year_list=[str(year) for year in years])
+                          year_list=[str(year) for year in years],
+                           trust_remote_code=True)
 
     # Combine all years into one DataFrame
     df = pd.concat([dataset[str(year)].to_pandas() for year in years])
