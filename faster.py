@@ -15,6 +15,7 @@ from functools import partial
 import concurrent.futures
 import random
 import os
+from time import time
 # Custom stopwords remain the same
 CUSTOM_STOPS = {
     'faid', 'aud', 'iaid', 'ditto', 'fame', 'fold', 'ing', 'con', 
@@ -387,24 +388,23 @@ def process_yearly_data(dataset, year: str, model: models.LdaModel,
     
     return df
 
-def main():
-    nltk.download('punkt_tab')
-    nltk.download('stopwords')
-    nltk.download('wordnet')
+from time import time
 
-    window_size = 5
-    num_processes = 8
-    sample_percentage = 10.0
-    analyzer = TemporalLDAAnalyzer(
-        window_size=window_size, 
-        num_processes=num_processes,
-        sample_percentage=sample_percentage
-    )
+def process_window(start_year: int, window_size: int, analyzer: TemporalLDAAnalyzer):
+    window_start_time = time()
+    print(f"\n{'='*80}")
+    print(f"Starting window: {start_year}-{start_year + window_size - 1}")
+    print(f"{'='*80}\n")
     
-    years = list(range(1800, 1810))
-    sampled_data = {}
-    for year in years:
+    # Load data
+    load_start = time()
+    window_data = {}
+    total_articles = 0
+    for year in range(start_year, start_year + window_size):
         year_str = str(year)
+        year_load_start = time()
+        print(f"\nLoading data for year {year_str}...")
+        
         year_dataset = load_dataset("dell-research-harvard/AmericanStories",
                                   "subset_years",
                                   year_list=[year_str],
@@ -413,75 +413,114 @@ def main():
         year_data = year_dataset[year_str].to_pandas()
         sample_size = int(len(year_data) * analyzer.sample_percentage)
         if sample_size > 0:
-            sampled_data[year] = year_data.sample(n=sample_size, random_state=42)
-            #print(f"\nYear {year}:")
-            #print(f"Sampled articles IDs: {sampled_data[year]['article_id'].tolist()}")
+            window_data[year] = year_data.sample(n=sample_size, random_state=42)
+            total_articles += sample_size
+            print(f"Sampled {sample_size} articles from {len(year_data)} total articles")
+            print(f"Year load time: {time() - year_load_start:.2f}s")
         
         del year_dataset
         del year_data
-
-    # Print sampled article IDs before window processing
-    #print("\nSampled article IDs by year:")
-    for year, df in sampled_data.items():
-        print(f"Year {year}: {len(df)} articles")
-
-    # Add debug print before window processing
-    #for window_start in range(min(years), max(years), analyzer.window_size):
-    #    print(f"\nProcessing window: {window_start}-{window_start + analyzer.window_size - 1}")
-    #    window_years = range(window_start, min(window_start + analyzer.window_size, max(years) + 1))
-    #   print(f"Years in window: {list(window_years)}")
+    
+    print(f"\nTotal data load time: {time() - load_start:.2f}s")
+    
+    # Preprocess
+    preprocess_start = time()
+    print("\nConcatenating window data...")
+    window_df = pd.concat([window_data[year] for year in window_data.keys()])
+    print(f"Total articles in window: {total_articles}")
+    
+    print("\nPreprocessing texts and building dictionary...")
+    texts, dictionary, corpus = analyzer.process_temporal_window(window_df, start_year)
+    print(f"Preprocessing time: {time() - preprocess_start:.2f}s")
+    
+    if texts is not None:
+        # Train LDA
+        lda_start = time()
+        print("\nTraining LDA model for window...")
+        model = analyzer.train_window_model(texts, dictionary, corpus, start_year)
+        print(f"LDA training time: {time() - lda_start:.2f}s")
         
-    #    window_df = pd.concat([sampled_data[year] for year in window_years])
-    #    print(f"Articles in window: {len(window_df)}")
-
-    # Store sampled article IDs
-    analyzer.sampled_article_ids = {year: set(df['article_id'].tolist()) 
-                                  for year, df in sampled_data.items()}
-
-    # Process windows using sampled data
-    for window_start in range(min(years), max(years), analyzer.window_size):
-        print(f"\nProcessing window: {window_start}-{window_start + analyzer.window_size - 1}")
+        # Process co-occurrences
+        cooccur_start = time()
+        print("\nGenerating top words cache...")
+        top_words_cache = get_top_words_per_topic(model)
         
-        window_df = pd.concat([sampled_data[year] 
-                             for year in range(window_start, 
-                                            min(window_start + analyzer.window_size, max(years) + 1))])
-        
-        texts, dictionary, corpus = analyzer.process_temporal_window(window_df, window_start)
-        
-        if texts is not None:
-            model = analyzer.train_window_model(texts, dictionary, corpus, window_start)
-            analyzer.models[window_start] = model
-            analyzer.dictionaries[window_start] = dictionary
-            analyzer.corpora[window_start] = corpus
-
-    # Process co-occurrences for each year
-    with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
-        futures = []
-        for year in years:
-            year_str = str(year)
-            window_start = (year // analyzer.window_size) * analyzer.window_size
-            model = analyzer.models[window_start]
-            dictionary = analyzer.dictionaries[window_start]
+        print("\nProcessing co-occurrences for each year...")
+        with concurrent.futures.ProcessPoolExecutor(max_workers=analyzer.num_processes) as executor:
+            futures = []
+            for year in window_data.keys():
+                print(f"\nSubmitting articles for year {year}...")
+                sampled_articles = list(window_data[year].to_dict('records'))
+                future = executor.submit(
+                    process_yearly_data,
+                    sampled_articles,
+                    str(year),
+                    model,
+                    dictionary,
+                    analyzer,
+                    window_size,
+                    top_words_cache
+                )
+                futures.append((str(year), future))
             
-            top_words_cache = get_top_words_per_topic(model)
-            sampled_articles = list(sampled_data[year].to_dict('records'))
-            
-            future = executor.submit(process_yearly_data, 
-                                   sampled_articles,
-                                   year_str, 
-                                   model, 
-                                   dictionary, 
-                                   analyzer, 
-                                   window_size,
-                                   top_words_cache)
-            futures.append((year_str, future))
+            print("\nProcessing submitted articles...")
+            for year_str, future in futures:
+                try:
+                    year_df = future.result()
+                    print(f"✓ Year {year_str}: Processed {len(year_df)} articles")
+                except Exception as e:
+                    print(f"✗ Error processing {year_str}: {e}")
         
-        for year_str, future in futures:
-            try:
-                year_df = future.result()
-                print(f"Processed {len(year_df)} articles for {year_str}")
-            except Exception as e:
-                print(f"Error processing {year_str}: {e}")
+        print(f"Co-occurrence processing time: {time() - cooccur_start:.2f}s")
+        
+        # Cleanup
+        cleanup_start = time()
+        print("\nCleaning up window data...")
+        del window_data
+        del window_df
+        del texts
+        del dictionary
+        del corpus
+        del model
+        print(f"Cleanup time: {time() - cleanup_start:.2f}s")
+        
+        total_window_time = time() - window_start_time
+        print(f"\nWindow {start_year}-{start_year + window_size - 1} complete")
+        print(f"Total window processing time: {total_window_time:.2f}s")
+        print(f"Articles processed per second: {total_articles/total_window_time:.2f}")
+
+def main():
+    total_start = time()
+    print("Initializing NLTK resources...")
+    nltk.download('punkt_tab')
+    nltk.download('stopwords')
+    nltk.download('wordnet')
+
+    window_size = 5
+    num_processes = 8
+    sample_percentage = 10.0
+    
+    print(f"\nInitializing analyzer with:")
+    print(f"- Window size: {window_size} years")
+    print(f"- Processes: {num_processes}")
+    print(f"- Sample percentage: {sample_percentage}%")
+    
+    analyzer = TemporalLDAAnalyzer(
+        window_size=window_size,
+        num_processes=num_processes,
+        sample_percentage=sample_percentage
+    )
+    
+    start_year = 1810
+    end_year = 1820
+    total_windows = (end_year - start_year) // window_size
+    
+    print(f"\nProcessing {total_windows} windows from {start_year} to {end_year}")
+    
+    for window_start in range(start_year, end_year, window_size):
+        process_window(window_start, window_size, analyzer)
+    
+    print(f"\nTotal execution time: {time() - total_start:.2f}s")
 
 if __name__ == '__main__':
     freeze_support()
