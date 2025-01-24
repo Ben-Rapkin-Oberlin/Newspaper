@@ -297,7 +297,7 @@ class TemporalLDAAnalyzer:
         corpus = [dictionary.doc2bow(text) for text in texts]
         
         return texts, dictionary, corpus
-
+        
 def analyze_cooccurrences_multi(text: str, target_words: List[str], window_size: int = 10) -> Dict[str, int]:
     """Optimized co-occurrence analysis"""
     words = word_tokenize(text.lower())
@@ -384,10 +384,10 @@ def process_yearly_data(dataset, year: str, model: models.LdaModel,
         top_words_dict = top_words_cache
     
     # Sample articles
-    articles = dataset
+    articles = list(dataset)
     sample_size = int(len(articles) * analyzer.sample_percentage)
     if sample_size > 0:
-        articles = articles.sample(n=sample_size, random_state=42)
+        articles = random.sample(articles, sample_size)
     
     process_args = [(article, model, dictionary, analyzer, top_words_dict) 
                    for article in articles]
