@@ -13,7 +13,7 @@ from collections import defaultdict
 from typing import Dict, List, Tuple, Any
 from functools import partial
 import concurrent.futures
-
+import random
 # Custom stopwords remain the same
 CUSTOM_STOPS = {
     'faid', 'aud', 'iaid', 'ditto', 'fame', 'fold', 'ing', 'con', 
@@ -272,20 +272,18 @@ class TemporalLDAAnalyzer:
     def process_temporal_window(self, df: pd.DataFrame, window_start: int) -> Tuple[List[List[str]], corpora.Dictionary, List[Any]]:
         """Process window with sampling"""
         window_end = window_start + self.window_size - 1
-        
-        # Group by year and sample
         dates = pd.to_datetime(df['date']).dt.year
-        df['year'] = dates
-        
-        sampled_dfs = []
-        for year in df['year'].unique():
-            year_df = df[df['year'] == year]
-            sample_size = int(len(year_df) * self.sample_percentage)
-            if sample_size > 0:
-                sampled_df = year_df.sample(n=sample_size, random_state=42)
-                sampled_dfs.append(sampled_df)
-        
-        window_df = pd.concat(sampled_dfs) if sampled_dfs else pd.DataFrame()
+        mask = (dates >= window_start) & (dates <= window_end)
+        window_df = df[mask]
+
+        # Store sampled article IDs for later use in co-occurrence analysis
+        if not hasattr(self, 'sampled_article_ids'):
+            self.sampled_article_ids = {}
+            
+        sample_size = int(len(window_df) * self.sample_percentage)
+        if sample_size > 0:
+            window_df = window_df.sample(n=sample_size, random_state=42)
+            self.sampled_article_ids[window_start] = set(window_df['article_id'].tolist())
         
         if len(window_df) == 0:
             print(f"Warning: No documents found in window {window_start}-{window_end}")
@@ -377,17 +375,15 @@ def process_article(args: Tuple[Dict, models.LdaModel, corpora.Dictionary, Tempo
 def process_yearly_data(dataset, year: str, model: models.LdaModel, 
     dictionary: corpora.Dictionary, analyzer: TemporalLDAAnalyzer, window: int, 
     top_words_cache: Dict = None) -> pd.DataFrame:
-    """Process yearly data with sampling"""
+    """Process yearly data using only sampled articles"""
     if top_words_cache is None:
         top_words_dict = get_top_words_per_topic(model)
     else:
         top_words_dict = top_words_cache
     
-    # Sample articles
-    articles = list(dataset)
-    sample_size = int(len(articles) * analyzer.sample_percentage)
-    if sample_size > 0:
-        articles = random.sample(articles, sample_size)
+    window_start = (int(year) // window) * window
+    sampled_ids = analyzer.sampled_article_ids.get(window_start, set())
+    articles = [article for article in dataset if article['article_id'] in sampled_ids]
     
     process_args = [(article, model, dictionary, analyzer, top_words_dict) 
                    for article in articles]
@@ -417,7 +413,7 @@ def main():
         num_processes=num_processes,
         sample_percentage=sample_percentage
     )
-    years = list(range(1840, 1844))
+    years = list(range(1800, 1809))
     dataset = load_dataset("dell-research-harvard/AmericanStories",
                           "subset_years",
                           year_list=[str(year) for year in years],
