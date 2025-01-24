@@ -16,6 +16,7 @@ import concurrent.futures
 import random
 import os
 from time import time
+from gensim.models.ldamulticore import LdaMulticore  # Add this import
 # Custom stopwords remain the same
 CUSTOM_STOPS = {
     'faid', 'aud', 'iaid', 'ditto', 'fame', 'fold', 'ing', 'con', 
@@ -105,7 +106,7 @@ class TemporalLDAAnalyzer:
     def __init__(self, window_size: int = 5, num_processes: int = 4, sample_percentage: float = 100.0):
         self.window_size = window_size
         self.num_processes = num_processes
-        self.sample_percentage = sample_percentage / 100.0  # Convert to decimal
+        self.sample_percentage = sample_percentage / 100.0
         self.models = {}
         self.dictionaries = {}
         self.corpora = {}
@@ -230,8 +231,8 @@ class TemporalLDAAnalyzer:
                     word_id = dictionary.token2id[word]
                     eta[topic_idx, word_id] = 0.5
         
-        # Train LDA model with optimized chunk size
-        model = models.LdaModel(
+        # Train LDA model with parallel processing
+        model = LdaMulticore(
             corpus=corpus,
             id2word=dictionary,
             num_topics=num_topics,
@@ -239,8 +240,9 @@ class TemporalLDAAnalyzer:
             alpha='asymmetric',
             eta=eta,
             random_state=42,
-            chunksize=4000,  # Increased chunk size for better performance
-            iterations=50
+            chunksize=2000,
+            iterations=50,
+            workers=20  # Use 20 cores
         )
         
         # Calculate coherence
@@ -388,7 +390,6 @@ def process_yearly_data(dataset, year: str, model: models.LdaModel,
     
     return df
 
-from time import time
 
 def process_window(start_year: int, window_size: int, analyzer: TemporalLDAAnalyzer):
     window_start_time = time()
