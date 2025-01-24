@@ -1,12 +1,11 @@
 import os
 import re
 import pandas as pd
-from datasets import load_dataset
 
 def unify_small_pox_variants(text: str) -> str:
     """
     Converts "small-pox", "small pox", etc. to "smallpox" (case-insensitive).
-    Ensures all variants become a single token "smallpox."
+    Ensures all variants become a single token "smallpox".
     """
     return re.sub(r'\bsmall[\-\s]+pox\b', 'smallpox', text, flags=re.IGNORECASE)
 
@@ -15,69 +14,55 @@ def count_occurrences(text: str, word: str) -> int:
     Counts how many times `word` appears in `text` (case-insensitive),
     matching whole words only.
     """
-    pattern = rf"\b{word}\b"  # Word boundary pattern
+    pattern = rf"\b{word}\b"  # word boundary
     return len(re.findall(pattern, text.lower()))
 
 def main():
-    # ------------------------------------------------
-    # Configure your sampling & year range
-    # ------------------------------------------------
-    start_year = 1880
-    end_year = 1890
-    sample_percentage = 0.10  # 10%
+    # ----------------------------------------------------------------------
+    # Adjust these parameters to match your main script's settings
+    # ----------------------------------------------------------------------
+    start_year = 1810
+    end_year = 1820
+    window_size = 5  # or whatever you used in the main script
     
-    # Folder to store the CSV outputs
-    output_folder = "yearly_smallpox_death_counts"
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
+    # The folder where your main script saved sample_{year}.csv
+    sample_input_dir = f"sampled_data/window_{window_size}"
+
+    # Output folder for our mention counts
+    output_folder = "yearly_smallpox_death_counts_same_sample"
+    os.makedirs(output_folder, exist_ok=True)
     
-    # ------------------------------------------------
-    # Loop through each year & load data
-    # ------------------------------------------------
+    # ----------------------------------------------------------------------
+    # Loop through each year, reading EXACT same sampled CSV from main script
+    # ----------------------------------------------------------------------
     for year in range(start_year, end_year):
-        year_str = str(year)
-        print(f"Loading data for year {year_str}...")
-
-        # Load from huggingface "dell-research-harvard/AmericanStories"
-        # specifying "subset_years" with year_list=[year_str]
-        dataset = load_dataset(
-            "dell-research-harvard/AmericanStories",
-            "subset_years",
-            year_list=[year_str],
-            trust_remote_code=True
-        )
-        df_year = dataset[year_str].to_pandas()
-
-        if len(df_year) == 0:
-            print(f"  No articles found for year {year_str}, skipping.")
-            continue
-
-        # Sample 10%
-        sample_size = int(len(df_year) * sample_percentage)
-        if sample_size == 0:
-            print(f"  Sample size is 0 for year {year_str}, skipping.")
+        csv_path = os.path.join(sample_input_dir, f"sample_{year}.csv")
+        if not os.path.exists(csv_path):
+            print(f"Sample file not found for year {year}: {csv_path}")
             continue
         
-        #df_sampled = df_year.sample(n=sample_size, random_state=42)
-        df_year_sampled = pd.read_csv(f'sampled_data/window_5/sample_{year}.csv')
- 
-        print(f"  Sampled {len(df_sampled)} articles from {len(df_year)} total")
+        df_sampled = pd.read_csv(csv_path)
+        if df_sampled.empty:
+            print(f"No data in {csv_path}, skipping.")
+            continue
 
-        # ------------------------------------------------
-        # Count "smallpox" and "death"/"deaths" occurrences
-        # ------------------------------------------------
+        print(f"\nLoaded {len(df_sampled)} sampled articles for year {year} from {csv_path}")
+
+        # ------------------------------------------------------------------
+        # For each article, unify small pox => smallpox, then count mentions
+        # ------------------------------------------------------------------
         counts_list = []
         for _, row in df_sampled.iterrows():
-            article_id = row["article_id"]
+            article_id = row.get("article_id", "")
             article_text = row.get("article", "")
 
-            # 1) Normalize "small-pox" / "small pox" => "smallpox"
+            # 1) unify "small-pox" => "smallpox"
             article_text = unify_small_pox_variants(article_text)
 
-            # 2) Count literal "smallpox" mentions
+            # 2) count literal "smallpox" mentions
             smallpox_count = count_occurrences(article_text, "smallpox")
 
-            # 3) Count "death" + "deaths"
+            # 3) sum of "death" + "deaths"
             death_count = (
                 count_occurrences(article_text, "death") +
                 count_occurrences(article_text, "deaths")
@@ -88,16 +73,14 @@ def main():
                 "smallpox_count": smallpox_count,
                 "death_count": death_count
             })
-        
-        # ------------------------------------------------
-        # Save results to CSV
-        # ------------------------------------------------
-        df_counts = pd.DataFrame(counts_list)
-        output_path = os.path.join(output_folder, f"{year_str}_smallpox_death_counts.csv")
-        df_counts.to_csv(output_path, index=False)
-        
-        print(f"  Saved {len(df_counts)} rows to {output_path}\n")
 
+        # ------------------------------------------------------------------
+        # Build DataFrame of results & save
+        # ------------------------------------------------------------------
+        df_counts = pd.DataFrame(counts_list)
+        output_path = os.path.join(output_folder, f"{year}_smallpox_death_counts.csv")
+        df_counts.to_csv(output_path, index=False)
+        print(f"Saved {len(df_counts)} rows with mention counts to {output_path}")
 
 if __name__ == "__main__":
     main()
