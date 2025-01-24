@@ -367,9 +367,9 @@ def process_yearly_data(dataset, year: str, model: models.LdaModel,
     else:
         top_words_dict = top_words_cache
     
+    # Use sampled_data directly instead of filtering from dataset
     window_start = (int(year) // window) * window
-    sampled_ids = analyzer.sampled_article_ids.get(window_start, set())
-    articles = [article for article in dataset if article['article_id'] in sampled_ids]
+    articles = dataset  # dataset is now pre-sampled in main()
     
     process_args = [(article, model, dictionary, analyzer, top_words_dict) 
                    for article in articles]
@@ -378,17 +378,17 @@ def process_yearly_data(dataset, year: str, model: models.LdaModel,
         results = list(executor.map(process_article, process_args))
     
     df = pd.DataFrame(results)
-    output_file = f'{year}_cooccurrence_analysis.csv'
+    
     if not os.path.exists(f'yearly_occurrence_data//window_{window}'):
         os.makedirs(f'yearly_occurrence_data//window_{window}')
-
     
-    df.to_csv(f'yearly_occurrence_data//window_{window}//'+output_file, index=False)
-
+    output_file = f'{year}_cooccurrence_analysis.csv'
+    df.to_csv(f'yearly_occurrence_data//window_{window}//{output_file}', index=False)
+    
     return df
 
 def main():
-    nltk.download('punkt')
+    nltk.download('punkt_tab')
     nltk.download('stopwords')
     nltk.download('wordnet')
 
@@ -401,13 +401,10 @@ def main():
         sample_percentage=sample_percentage
     )
     
-    years = list(range(1800, 1805))
+    years = list(range(1800, 1810))
     sampled_data = {}
-    
-    # Load, sample, and immediately discard each year's data
     for year in years:
         year_str = str(year)
-        # Load single year
         year_dataset = load_dataset("dell-research-harvard/AmericanStories",
                                   "subset_years",
                                   year_list=[year_str],
@@ -417,11 +414,25 @@ def main():
         sample_size = int(len(year_data) * analyzer.sample_percentage)
         if sample_size > 0:
             sampled_data[year] = year_data.sample(n=sample_size, random_state=42)
-            print(f"Sampled {sample_size} articles from {year} (original size: {len(year_data)})")
+            #print(f"\nYear {year}:")
+            #print(f"Sampled articles IDs: {sampled_data[year]['article_id'].tolist()}")
         
-        # Clear year dataset from memory
         del year_dataset
         del year_data
+
+    # Print sampled article IDs before window processing
+    #print("\nSampled article IDs by year:")
+    for year, df in sampled_data.items():
+        print(f"Year {year}: {len(df)} articles")
+
+    # Add debug print before window processing
+    #for window_start in range(min(years), max(years), analyzer.window_size):
+    #    print(f"\nProcessing window: {window_start}-{window_start + analyzer.window_size - 1}")
+    #    window_years = range(window_start, min(window_start + analyzer.window_size, max(years) + 1))
+    #   print(f"Years in window: {list(window_years)}")
+        
+    #    window_df = pd.concat([sampled_data[year] for year in window_years])
+    #    print(f"Articles in window: {len(window_df)}")
 
     # Store sampled article IDs
     analyzer.sampled_article_ids = {year: set(df['article_id'].tolist()) 
