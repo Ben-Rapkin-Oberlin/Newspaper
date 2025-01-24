@@ -100,18 +100,18 @@ def get_top_words_per_topic(model: models.LdaModel, num_words: int = 5) -> Dict[
     return top_words
 
 class TemporalLDAAnalyzer:
-    def __init__(self, window_size: int = 5, num_processes: int = 4):
+    def __init__(self, window_size: int = 5, num_processes: int = 4, sample_percentage: float = 100.0):
         self.window_size = window_size
         self.num_processes = num_processes
+        self.sample_percentage = sample_percentage / 100.0  # Convert to decimal
         self.models = {}
         self.dictionaries = {}
         self.corpora = {}
         self.coherence_scores = {}
-        # Initialize these once for reuse
         self.stop_words = set(stopwords.words('english'))
         self.stop_words.update(CUSTOM_STOPS)
         self.lemmatizer = WordNetLemmatizer()
-    
+        
     def get_word_topic_distribution(self, word: str, window_start: int) -> Dict[str, Dict[str, float]]:
             """
             Get topic distribution for a single word in a specific time window.
@@ -270,26 +270,30 @@ class TemporalLDAAnalyzer:
         }
 
     def process_temporal_window(self, df: pd.DataFrame, window_start: int) -> Tuple[List[List[str]], corpora.Dictionary, List[Any]]:
-        """Optimized window processing"""
+        """Process window with sampling"""
         window_end = window_start + self.window_size - 1
         
-        # Use vectorized operations
+        # Group by year and sample
         dates = pd.to_datetime(df['date']).dt.year
-        mask = (dates >= window_start) & (dates <= window_end)
-        window_df = df[mask]
+        df['year'] = dates
+        
+        sampled_dfs = []
+        for year in df['year'].unique():
+            year_df = df[df['year'] == year]
+            sample_size = int(len(year_df) * self.sample_percentage)
+            if sample_size > 0:
+                sampled_df = year_df.sample(n=sample_size, random_state=42)
+                sampled_dfs.append(sampled_df)
+        
+        window_df = pd.concat(sampled_dfs) if sampled_dfs else pd.DataFrame()
         
         if len(window_df) == 0:
             print(f"Warning: No documents found in window {window_start}-{window_end}")
             return None, None, None
         
-        # Process texts in parallel
         texts = self.process_texts_batch(window_df['article'].tolist())
-        
-        # Optimize dictionary creation
         dictionary = corpora.Dictionary(texts)
         dictionary.filter_extremes(no_below=5, no_above=0.5, keep_n=50000)
-        
-        # Use comprehension for corpus creation
         corpus = [dictionary.doc2bow(text) for text in texts]
         
         return texts, dictionary, corpus
@@ -373,23 +377,24 @@ def process_article(args: Tuple[Dict, models.LdaModel, corpora.Dictionary, Tempo
 def process_yearly_data(dataset, year: str, model: models.LdaModel, 
     dictionary: corpora.Dictionary, analyzer: TemporalLDAAnalyzer, window: int, 
     top_words_cache: Dict = None) -> pd.DataFrame:
-    """Parallel processing of yearly data with caching"""
-    # Get or compute top words
+    """Process yearly data with sampling"""
     if top_words_cache is None:
         top_words_dict = get_top_words_per_topic(model)
     else:
         top_words_dict = top_words_cache
     
-    # Prepare arguments for parallel processing
+    # Sample articles
     articles = dataset
+    sample_size = int(len(articles) * analyzer.sample_percentage)
+    if sample_size > 0:
+        articles = articles.sample(n=sample_size, random_state=42)
+    
     process_args = [(article, model, dictionary, analyzer, top_words_dict) 
                    for article in articles]
     
-    # Process articles in parallel
     with concurrent.futures.ProcessPoolExecutor(max_workers=analyzer.num_processes) as executor:
         results = list(executor.map(process_article, process_args))
     
-    # Create DataFrame and save
     df = pd.DataFrame(results)
     output_file = f'cooccurrence_analysis_{year}_{window}.csv'
     df.to_csv(output_file, index=False)
@@ -404,12 +409,14 @@ def main():
         except LookupError:
             nltk.download(resource)
 
-    # Initialize analyzer with parallel processing
     window_size = 5
-    num_processes = 6 # Adjust based on your CPU cores
-    analyzer = TemporalLDAAnalyzer(window_size=window_size, num_processes=num_processes)
-    
-    # Load dataset more efficiently
+    num_processes = 6
+    sample_percentage = 20.0  # Adjust this value to sample different percentages
+    analyzer = TemporalLDAAnalyzer(
+        window_size=window_size, 
+        num_processes=num_processes,
+        sample_percentage=sample_percentage
+    )
     years = list(range(1840, 1844))
     dataset = load_dataset("dell-research-harvard/AmericanStories",
                           "subset_years",
