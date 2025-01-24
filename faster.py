@@ -270,18 +270,18 @@ class TemporalLDAAnalyzer:
             'u_mass': coherence_umass
         }
 
-   def process_temporal_window(self, df: pd.DataFrame, window_start: int) -> Tuple[List[List[str]], corpora.Dictionary, List[Any]]:
-    """Process window using pre-sampled data"""
-    if len(df) == 0:
-        print(f"Warning: No documents found in window {window_start}-{window_start + self.window_size - 1}")
-        return None, None, None
+    def process_temporal_window(self, df: pd.DataFrame, window_start: int) -> Tuple[List[List[str]], corpora.Dictionary, List[Any]]:
+        """Process window using pre-sampled data"""
+        if len(df) == 0:
+            print(f"Warning: No documents found in window {window_start}-{window_start + self.window_size - 1}")
+            return None, None, None
     
-    texts = self.process_texts_batch(df['article'].tolist())
-    dictionary = corpora.Dictionary(texts)
-    dictionary.filter_extremes(no_below=5, no_above=0.5, keep_n=50000)
-    corpus = [dictionary.doc2bow(text) for text in texts]
+        texts = self.process_texts_batch(df['article'].tolist())
+        dictionary = corpora.Dictionary(texts)
+        dictionary.filter_extremes(no_below=5, no_above=0.5, keep_n=50000)
+        corpus = [dictionary.doc2bow(text) for text in texts]
     
-    return texts, dictionary, corpus
+        return texts, dictionary, corpus
         
 def analyze_cooccurrences_multi(text: str, target_words: List[str], window_size: int = 10) -> Dict[str, int]:
     """Optimized co-occurrence analysis"""
@@ -401,7 +401,7 @@ def main():
         sample_percentage=sample_percentage
     )
     
-    years = list(range(1800, 1803))
+    years = list(range(1800, 1805))
     sampled_data = {}
     
     # Load, sample, and immediately discard each year's data
