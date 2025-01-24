@@ -255,26 +255,30 @@ def process_yearly_data_bulk(
 ) -> pd.DataFrame:
     """
     Process an entire year's data in a single/bulk pass:
-      1. Preprocess (already done at window level? Or do it here if needed)
-      2. doc2bow (already done or do it here)
+      1. Preprocess
+      2. doc2bow
       3. Bulk co-occurrence
       4. Batch inference
       5. Save to CSV
     """
 
-    # 1) We assume articles are not preprocessed yet. 
-    #    If you *already* preprocessed at the window level, you'd pass that in.
+    ######################
+    # 1) Build a map from each word -> its topic index
+    ######################
+    # For labeling columns as "cooccur_topicX_word"
+    word2topic = {}
+    for t_idx, words in top_words_dict.items():
+        for w in words:
+            word2topic[w] = t_idx
+
+    # We'll unify *all* topic words for co-occurrence in one set
+    all_topic_words = set(word2topic.keys())
+
+    # 2) Preprocess + doc2bow + keep raw tokens for co-occ
     texts = []
     bows = []
     token_lists_for_coocc = []
 
-    # Prepare a combined set of top words from all topics for co-occurrence
-    all_topic_words = set()
-    for tw in top_words_dict.values():
-        all_topic_words.update(tw)
-    all_topic_words = list(all_topic_words)  # final list of unique words
-
-    # Single-pass to preprocess everything
     for article in dataset:
         text = article['article']
         # Preprocess
@@ -285,23 +289,21 @@ def process_yearly_data_bulk(
         bow = dictionary.doc2bow(preproc)
         bows.append(bow)
 
-        # For co-occurrence, we can do a simpler tokenization (or reuse "preproc" if you want).
-        # But if your "window_size" means 10 tokens in raw text, you need the raw tokenization:
-        # We'll do a simpler approach with .split(), or a quick word_tokenize if needed.
-        raw_tokens = text.lower().split()
+        # For co-occurrence, we might want raw tokenization or a simpler approach:
+        raw_tokens = text.lower().split()  
         token_lists_for_coocc.append(raw_tokens)
 
-    # 2) Bulk co-occurrence
+    # 3) Analyze co-occurrences in bulk
     cooccur_results = analyze_cooccurrences_bulk(
-        token_lists_for_coocc, 
-        all_topic_words, 
+        token_lists_for_coocc,
+        list(all_topic_words),  # pass as list
         window_size=10
     )
 
-    # 3) Batch topic inference
+    # 4) Batch topic inference
     topic_dists = batch_inference(model, bows, chunk_size=1000)
 
-    # 4) Build final DataFrame
+    # 5) Build final DataFrame with labeled columns
     records = []
     for i, article in enumerate(dataset):
         rec = {}
@@ -309,25 +311,27 @@ def process_yearly_data_bulk(
         rec['id'] = article['article_id']
         rec['word_count'] = len(token_lists_for_coocc[i])
 
-        # Co-occurrence results
-        for k, v in cooccur_results[i].items():
-            if k == 'death':
-                rec['smallpox_death_cooccurrences'] = v
+        # If there's no "smallpox" in the doc, cooccur_results[i] might be 0 everywhere.
+        # But we still label them properly.
+        for word_key, count_val in cooccur_results[i].items():
+            if word_key == 'death':
+                # Special logic for "death"/"deaths"
+                rec['smallpox_death_cooccurrences'] = count_val
             else:
-                # For each topic word, store cooccurrence
-                # e.g. rec[f'cooccur_{k}'] = v
-                rec[f'cooccur_{k}'] = v
+                # We know this is a "topic word"
+                topic_index = word2topic[word_key]  # which topic it belongs to
+                rec[f'cooccur_topic{topic_index+1}_{word_key}'] = count_val
 
-        # Topic distribution results
+        # Add doc-topic distribution
         dist = topic_dists[i]
-        for topic_idx in range(len(SEED_TOPICS)):
+        for topic_idx in range(len(top_words_dict)):
             rec[f'topic_{topic_idx + 1}_prob'] = dist[topic_idx]
 
         records.append(rec)
 
     df = pd.DataFrame(records)
-
-    # 5) Save CSV
+    
+    # 6) Write out to CSV
     output_dir = f'yearly_occurrence_data/window_{window}'
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
