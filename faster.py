@@ -270,32 +270,18 @@ class TemporalLDAAnalyzer:
             'u_mass': coherence_umass
         }
 
-    def process_temporal_window(self, df: pd.DataFrame, window_start: int) -> Tuple[List[List[str]], corpora.Dictionary, List[Any]]:
-        """Process window with sampling"""
-        window_end = window_start + self.window_size - 1
-        dates = pd.to_datetime(df['date']).dt.year
-        mask = (dates >= window_start) & (dates <= window_end)
-        window_df = df[mask]
-
-        # Store sampled article IDs for later use in co-occurrence analysis
-        if not hasattr(self, 'sampled_article_ids'):
-            self.sampled_article_ids = {}
-            
-        sample_size = int(len(window_df) * self.sample_percentage)
-        if sample_size > 0:
-            window_df = window_df.sample(n=sample_size, random_state=42)
-            self.sampled_article_ids[window_start] = set(window_df['article_id'].tolist())
-        
-        if len(window_df) == 0:
-            print(f"Warning: No documents found in window {window_start}-{window_end}")
-            return None, None, None
-        
-        texts = self.process_texts_batch(window_df['article'].tolist())
-        dictionary = corpora.Dictionary(texts)
-        dictionary.filter_extremes(no_below=5, no_above=0.5, keep_n=50000)
-        corpus = [dictionary.doc2bow(text) for text in texts]
-        
-        return texts, dictionary, corpus
+   def process_temporal_window(self, df: pd.DataFrame, window_start: int) -> Tuple[List[List[str]], corpora.Dictionary, List[Any]]:
+    """Process window using pre-sampled data"""
+    if len(df) == 0:
+        print(f"Warning: No documents found in window {window_start}-{window_start + self.window_size - 1}")
+        return None, None, None
+    
+    texts = self.process_texts_batch(df['article'].tolist())
+    dictionary = corpora.Dictionary(texts)
+    dictionary.filter_extremes(no_below=5, no_above=0.5, keep_n=50000)
+    corpus = [dictionary.doc2bow(text) for text in texts]
+    
+    return texts, dictionary, corpus
         
 def analyze_cooccurrences_multi(text: str, target_words: List[str], window_size: int = 10) -> Dict[str, int]:
     """Optimized co-occurrence analysis"""
@@ -402,54 +388,62 @@ def process_yearly_data(dataset, year: str, model: models.LdaModel,
     return df
 
 def main():
-    # Download NLTK data
-    for resource in ['punkt', 'punkt_tab', 'stopwords', 'wordnet']:
-        try:
-            nltk.data.find(f'tokenizers/{resource}')
-        except LookupError:
-            nltk.download(resource)
+    nltk.download('punkt')
+    nltk.download('stopwords')
+    nltk.download('wordnet')
 
     window_size = 5
     num_processes = 8
-    sample_percentage =10.0  # Adjust this value to sample different percentages
+    sample_percentage = 10.0
     analyzer = TemporalLDAAnalyzer(
         window_size=window_size, 
         num_processes=num_processes,
         sample_percentage=sample_percentage
     )
+    
     years = list(range(1800, 1803))
-    dataset = load_dataset("dell-research-harvard/AmericanStories",
-                          "subset_years",
-                          year_list=[str(year) for year in years],
-                          trust_remote_code=True)
+    sampled_data = {}
+    
+    # Load, sample, and immediately discard each year's data
+    for year in years:
+        year_str = str(year)
+        # Load single year
+        year_dataset = load_dataset("dell-research-harvard/AmericanStories",
+                                  "subset_years",
+                                  year_list=[year_str],
+                                  trust_remote_code=True)
+        
+        year_data = year_dataset[year_str].to_pandas()
+        sample_size = int(len(year_data) * analyzer.sample_percentage)
+        if sample_size > 0:
+            sampled_data[year] = year_data.sample(n=sample_size, random_state=42)
+            print(f"Sampled {sample_size} articles from {year} (original size: {len(year_data)})")
+        
+        # Clear year dataset from memory
+        del year_dataset
+        del year_data
 
-    # Process windows in parallel
+    # Store sampled article IDs
+    analyzer.sampled_article_ids = {year: set(df['article_id'].tolist()) 
+                                  for year, df in sampled_data.items()}
+
+    # Process windows using sampled data
     for window_start in range(min(years), max(years), analyzer.window_size):
         print(f"\nProcessing window: {window_start}-{window_start + analyzer.window_size - 1}")
         
-        # Combine data for window
-        df = pd.concat([dataset[str(year)].to_pandas() 
-                       for year in range(window_start, 
-                                      min(window_start + analyzer.window_size, max(years) + 1))])
+        window_df = pd.concat([sampled_data[year] 
+                             for year in range(window_start, 
+                                            min(window_start + analyzer.window_size, max(years) + 1))])
         
-        # Process window
-        texts, dictionary, corpus = analyzer.process_temporal_window(df, window_start)
+        texts, dictionary, corpus = analyzer.process_temporal_window(window_df, window_start)
         
         if texts is not None:
-            # Train model
             model = analyzer.train_window_model(texts, dictionary, corpus, window_start)
-            
-            # Store results
             analyzer.models[window_start] = model
             analyzer.dictionaries[window_start] = dictionary
             analyzer.corpora[window_start] = corpus
-            
-            words_to_analyze = []#['liver','breast','expired','duell','victim']  # Add any words you're interested in
-            print(f"\nAnalyzing specific words for window {window_start}-{window_start+window_size}:")
-            for word in words_to_analyze:
-                analyzer.print_word_topic_distribution(word, window_start)
-                
-    # Process each year's data in parallel with caching
+
+    # Process co-occurrences for each year
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
         futures = []
         for year in years:
@@ -458,11 +452,11 @@ def main():
             model = analyzer.models[window_start]
             dictionary = analyzer.dictionaries[window_start]
             
-            # Cache top words for each model
             top_words_cache = get_top_words_per_topic(model)
+            sampled_articles = list(sampled_data[year].to_dict('records'))
             
             future = executor.submit(process_yearly_data, 
-                                   dataset[year_str], 
+                                   sampled_articles,
                                    year_str, 
                                    model, 
                                    dictionary, 
@@ -471,15 +465,12 @@ def main():
                                    top_words_cache)
             futures.append((year_str, future))
         
-        # Get results as they complete
         for year_str, future in futures:
             try:
                 year_df = future.result()
                 print(f"Processed {len(year_df)} articles for {year_str}")
             except Exception as e:
                 print(f"Error processing {year_str}: {e}")
-                
-        
 
 if __name__ == '__main__':
     freeze_support()
