@@ -58,7 +58,9 @@ def main():
             print(f"  Sample size is 0 for year {year_str}, skipping.")
             continue
         
-        df_sampled = df_year.sample(n=sample_size, random_state=42)
+        #df_sampled = df_year.sample(n=sample_size, random_state=42)
+        df_year_sampled = pd.read_csv(f'sampled_data/window_5/sample_{year}.csv')
+ 
         print(f"  Sampled {len(df_sampled)} articles from {len(df_year)} total")
 
         # ------------------------------------------------
