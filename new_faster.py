@@ -147,19 +147,32 @@ class TemporalLDAAnalyzer:
         self.lemmatizer = WordNetLemmatizer()
 
     def preprocess_text(self, text: str) -> List[str]:
-        """Optimized preprocessing function."""
-        # Combine regex operations
-        text = re.sub(r'[^a-zA-Z\s]+|\s+', ' ', text.lower()).strip()
-        tokens = word_tokenize(text)
+    """
+    Optimized preprocessing function with 'small pox' unification.
+    Converts 'small-pox', 'small pox', 'Small Pox', etc. to one token: 'smallpox'.
+    """
 
-        # Lemmatize & filter
-        return [
-            self.lemmatizer.lemmatize(t)
-            for t in tokens
-            if len(t) > 3
-               and t not in self.stop_words
-               and t.isalpha()
-        ]
+    # 1) Unify "small-pox", "small pox", etc. => "smallpox"
+    #    (case-insensitive because of flags=re.IGNORECASE)
+    text = re.sub(r'\bsmall[\-\s]+pox\b', 'smallpox', text, flags=re.IGNORECASE)
+
+    # 2) Lowercase & remove non-alphabetic chars
+    text = re.sub(r'[^a-zA-Z\s]+|\s+', ' ', text.lower()).strip()
+
+    # 3) Tokenize
+    tokens = word_tokenize(text)
+
+    # 4) Lemmatize, remove stopwords, apply length filter (optional)
+    #    If you want to keep shorter tokens (like "pox"), use >=3 or remove length check.
+    processed_tokens = [
+        self.lemmatizer.lemmatize(t)
+        for t in tokens
+        if len(t) > 3                  # <-- Consider reducing to >=3 or removing this filter
+        and t not in self.stop_words
+        and t.isalpha()
+    ]
+
+    return processed_tokens
 
     def process_temporal_window(self, df: pd.DataFrame, window_start: int):
         """
