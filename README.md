@@ -1,2 +1,2 @@
 # Newspaper
-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
+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
