@@ -74,7 +74,7 @@ def get_top_words_per_topic(model: models.LdaModel, num_words: int = 5) -> Dict[
 def analyze_cooccurrences_bulk(
     token_lists: List[List[str]],
     topic_words: List[str],
-    window_size: int = 10
+    window_size: int = 200
 ) -> List[Dict[str, int]]:
     """
     Analyze co-occurrences with 'smallpox' in a bulk manner.
@@ -410,7 +410,7 @@ def process_window(start_year: int, window_size: int, analyzer: TemporalLDAAnaly
             print(f"Sampled {sample_size} articles from {len(year_data)} total articles")
             print(f"Year load time: {time() - year_load_start:.2f}s")
             
-            sample_output_dir = f'sampled_data/window_{self.window_size}'
+            sample_output_dir = f'sampled_data/window_{window_size}'
             os.makedirs(sample_output_dir, exist_ok=True)
             window_data[year].to_csv(os.path.join(sample_output_dir, f'sample_{year}.csv'), index=False)
         
@@ -519,8 +519,8 @@ def main():
         sample_percentage=sample_percentage
     )
 
-    start_year = 1810
-    end_year = 1820
+    start_year = 1885
+    end_year = 1890
     total_windows = (end_year - start_year) // window_size
 
     print(f"\nProcessing {total_windows} windows from {start_year} to {end_year}")

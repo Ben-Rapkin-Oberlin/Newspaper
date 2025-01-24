@@ -287,51 +287,54 @@ class TemporalLDAAnalyzer:
         return texts, dictionary, corpus
         
 def analyze_cooccurrences_multi(text: str, target_words: List[str], window_size: int = 10) -> Dict[str, int]:
-    # Convert to lowercase and tokenize once
+    """Optimized co-occurrence analysis"""
     words = word_tokenize(text.lower())
+    
+    # Use set for faster lookups
     target_words_set = set(target_words)
     
-    # Find smallpox positions
+    # Find smallpox positions more efficiently
     smallpox_positions = [i for i, word in enumerate(words) if word == 'smallpox']
     
     # Initialize counts
     cooccurrences = {word: 0 for word in target_words}
-    cooccurrences['death'] = 0  # Special case for death/deaths
+    cooccurrences['death'] = 0
     
-    # Process each window
+    # Process windows more efficiently
     for sp_pos in smallpox_positions:
         window_start = max(0, sp_pos - window_size)
         window_end = min(len(words), sp_pos + window_size + 1)
+        
+        # Create window set for faster lookups
         window_set = set(words[window_start:window_end])
         
+        # Check death/deaths
         if 'death' in window_set or 'deaths' in window_set:
             cooccurrences['death'] += 1
-            
-        # Update counts for matching target words
+        
+        # Update counts for all matching target words
         for word in target_words_set.intersection(window_set):
             cooccurrences[word] += 1
                 
     return cooccurrences
 
-def process_article(args: Tuple[Dict, models.LdaModel, corpora.Dictionary, TemporalLDAAnalyzer, Dict[int, List[str]]]):
+def process_article(args: Tuple[Dict, models.LdaModel, corpora.Dictionary, TemporalLDAAnalyzer, Dict[int, List[str]]]) -> Dict:
+    """Process a single article"""
     article, model, dictionary, analyzer, top_words_dict = args
+    
     text = article['article']
     article_id = article['article_id']
     
-    # Pre-calculate topic words once
-    topic_words = set()
-    for words in top_words_dict.values():
-        topic_words.update(words)
-    
-    # Single text preprocessing
+    # Count words
     word_count = len(word_tokenize(text))
-    preprocessed_text = analyzer.preprocess_text(text)
-    bow = dictionary.doc2bow(preprocessed_text)
     
-    # Single co-occurrence analysis
-    cooccurrences = analyze_cooccurrences_multi(text, list(topic_words))
+    # Get all top words
+    all_top_words = [word for words in top_words_dict.values() for word in words]
     
-    # Build result
+    # Get co-occurrences
+    cooccurrences = analyze_cooccurrences_multi(text, all_top_words)
+    
+    # Create result dictionary
     result = {
         'id': article_id,
         'word_count': word_count,
@@ -343,8 +346,12 @@ def process_article(args: Tuple[Dict, models.LdaModel, corpora.Dictionary, Tempo
         for word in topic_words:
             result[f'cooccur_topic{topic_idx+1}_{word}'] = cooccurrences[word]
     
-    # Get topic distribution once
+    # Get topic distribution
+    preprocessed_text = analyzer.preprocess_text(text)
+    bow = dictionary.doc2bow(preprocessed_text)
     topic_dist = model.get_document_topics(bow)
+    
+    # Add topic probabilities
     for topic_idx in range(len(SEED_TOPICS)):
         prob = 0.0
         for t_idx, t_prob in topic_dist:
@@ -352,29 +359,34 @@ def process_article(args: Tuple[Dict, models.LdaModel, corpora.Dictionary, Tempo
                 prob = t_prob
                 break
         result[f'topic_{topic_idx + 1}_prob'] = prob
-        
     return result
 
-def process_yearly_data(dataset, year: str, model: models.LdaModel, dictionary: corpora.Dictionary, 
-                      analyzer: TemporalLDAAnalyzer, window: int, top_words_cache: Dict = None):
-    results = []
-    batch_size = 50
+def process_yearly_data(dataset, year: str, model: models.LdaModel, 
+    dictionary: corpora.Dictionary, analyzer: TemporalLDAAnalyzer, window: int, 
+    top_words_cache: Dict = None) -> pd.DataFrame:
+    """Process yearly data using only sampled articles"""
+    if top_words_cache is None:
+        top_words_dict = get_top_words_per_topic(model)
+    else:
+        top_words_dict = top_words_cache
     
-    for i in range(0, len(dataset), batch_size):
-        batch = dataset[i:i + batch_size]
-        process_args = [(article, model, dictionary, analyzer, top_words_cache) for article in batch]
-        
-        with concurrent.futures.ProcessPoolExecutor(max_workers=analyzer.num_processes) as executor:
-            batch_results = list(executor.map(process_article, process_args))
-            results.extend(batch_results)
+    # Use sampled_data directly instead of filtering from dataset
+    window_start = (int(year) // window) * window
+    articles = dataset  # dataset is now pre-sampled in main()
+    
+    process_args = [(article, model, dictionary, analyzer, top_words_dict) 
+                   for article in articles]
+    
+    with concurrent.futures.ProcessPoolExecutor(max_workers=analyzer.num_processes) as executor:
+        results = list(executor.map(process_article, process_args))
     
     df = pd.DataFrame(results)
     
-    if not os.path.exists(f'yearly_occurrence_data/window_{window}'):
-        os.makedirs(f'yearly_occurrence_data/window_{window}')
+    if not os.path.exists(f'yearly_occurrence_data//window_{window}'):
+        os.makedirs(f'yearly_occurrence_data//window_{window}')
     
     output_file = f'{year}_cooccurrence_analysis.csv'
-    df.to_csv(f'yearly_occurrence_data/window_{window}/{output_file}', index=False)
+    df.to_csv(f'yearly_occurrence_data//window_{window}//{output_file}', index=False)
     
     return df
 
@@ -500,8 +512,8 @@ def main():
         sample_percentage=sample_percentage
     )
     
-    start_year = 1890
-    end_year = 1900
+    start_year = 1880
+    end_year = 1890
     total_windows = (end_year - start_year) // window_size
     
     print(f"\nProcessing {total_windows} windows from {start_year} to {end_year}")

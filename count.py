@@ -21,8 +21,8 @@ def main():
     # ----------------------------------------------------------------------
     # Adjust these parameters to match your main script's settings
     # ----------------------------------------------------------------------
-    start_year = 1810
-    end_year = 1820
+    start_year = 1885
+    end_year = 1890
     window_size = 5  # or whatever you used in the main script
     
     # The folder where your main script saved sample_{year}.csv
