@@ -77,30 +77,32 @@ def analyze_cooccurrences_bulk(
     window_size: int = 10
 ) -> List[Dict[str, int]]:
     """
-    Analyze co-occurrences with 'smallpox' in a bulk manner. 
-    For each list of tokens, returns a dict with co-occurrence counts.
-    Also counts special "death"/"deaths" within the same window.
+    Analyze co-occurrences with 'smallpox' in a bulk manner.
+    For each list of tokens, returns a dict with co-occurrence counts
+    for each word in `topic_words` + a special 'death' key that increments
+    if 'death' or 'deaths' appear near 'smallpox'.
     """
     topic_words_set = set(topic_words)
     results = []
 
     for tokens in token_lists:
+        # Find positions of "smallpox"
         smallpox_positions = [i for i, w in enumerate(tokens) if w == 'smallpox']
 
+        # Initialize cooccurrences
         cooccurrences = {w: 0 for w in topic_words_set}
-        # Also track "death" occurrences
-        cooccurrences['death'] = 0
+        cooccurrences['death'] = 0  # We'll store 'death' & 'deaths' hits here
 
         for pos in smallpox_positions:
             win_start = max(pos - window_size, 0)
             win_end = min(pos + window_size + 1, len(tokens))
             window_slice = tokens[win_start:win_end]
 
-            # Increase death count if "death" or "deaths" appear
+            # If "death" or "deaths" appear in that window, increment
             if 'death' in window_slice or 'deaths' in window_slice:
                 cooccurrences['death'] += 1
 
-            # Update counts for topic words
+            # Update counts for the topic words
             for w in topic_words_set:
                 if w in window_slice:
                     cooccurrences[w] += 1
