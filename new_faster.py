@@ -131,64 +131,86 @@ def batch_inference(model: models.LdaModel, bows: List[List[Tuple[int,int]]], ch
     return doc_topic_distributions
 
 
+import re
+import numpy as np
+import pandas as pd
+from typing import List, Dict, Any
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import stopwords
+from gensim import corpora
+import multiprocessing
+
 class TemporalLDAAnalyzer:
     def __init__(self, window_size: int = 5, num_processes: int = 4, sample_percentage: float = 100.0):
         self.window_size = window_size
         self.num_processes = num_processes
         self.sample_percentage = sample_percentage / 100.0
-        self.models = {}
-        self.dictionaries = {}
-        self.corpora = {}
+        
+        # Basic text tools
+        self.stop_words = set(stopwords.words('english'))
+        self.lemmatizer = WordNetLemmatizer()
         self.coherence_scores = {}
         
-        # Stopwords and lemmatizer
-        self.stop_words = set(stopwords.words('english'))
-        self.stop_words.update(CUSTOM_STOPS)
-        self.lemmatizer = WordNetLemmatizer()
-
     def preprocess_text(self, text: str) -> List[str]:
-    """
-    Optimized preprocessing function with 'small pox' unification.
-    Converts 'small-pox', 'small pox', 'Small Pox', etc. to one token: 'smallpox'.
-    """
-
-    # 1) Unify "small-pox", "small pox", etc. => "smallpox"
-    #    (case-insensitive because of flags=re.IGNORECASE)
-    text = re.sub(r'\bsmall[\-\s]+pox\b', 'smallpox', text, flags=re.IGNORECASE)
-
-    # 2) Lowercase & remove non-alphabetic chars
-    text = re.sub(r'[^a-zA-Z\s]+|\s+', ' ', text.lower()).strip()
-
-    # 3) Tokenize
-    tokens = word_tokenize(text)
-
-    # 4) Lemmatize, remove stopwords, apply length filter (optional)
-    #    If you want to keep shorter tokens (like "pox"), use >=3 or remove length check.
-    processed_tokens = [
-        self.lemmatizer.lemmatize(t)
-        for t in tokens
-        if len(t) > 3                  # <-- Consider reducing to >=3 or removing this filter
-        and t not in self.stop_words
-        and t.isalpha()
-    ]
-
-    return processed_tokens
-
-    def process_temporal_window(self, df: pd.DataFrame, window_start: int):
         """
-        Preprocess the entire window's data, build dictionary, etc.
+        Single-text preprocessing:
+          - Convert 'small-pox' / 'small pox' => 'smallpox'
+          - Lowercase & remove punctuation
+          - Tokenize
+          - Lemmatize, remove stopwords, filter short tokens
+        """
+        # 1) Unify small-pox, small pox, etc. => smallpox (case-insensitive)
+        text = re.sub(r'\bsmall[\-\s]+pox\b', 'smallpox', text, flags=re.IGNORECASE)
+
+        # 2) Lowercase & strip punctuation
+        text = re.sub(r'[^a-zA-Z\s]+|\s+', ' ', text.lower()).strip()
+
+        # 3) Tokenize
+        tokens = word_tokenize(text)
+
+        # 4) Lemmatize & filter
+        processed_tokens = []
+        for tok in tokens:
+            # e.g. remove tokens <= 3 letters if you want
+            if len(tok) > 3 and tok.isalpha() and tok not in self.stop_words:
+                processed_tokens.append(self.lemmatizer.lemmatize(tok))
+
+        return processed_tokens
+
+    def parallel_preprocess_texts(self, texts: List[str]) -> List[List[str]]:
+        """
+        Parallelize preprocessing for a list of articles.
+        Splits the work across self.num_processes worker processes.
+        """
+        # Pool automatically spawns processes => pass self.preprocess_text as the callable
+        with multiprocessing.Pool(processes=self.num_processes) as pool:
+            # map returns a list of results in order
+            preprocessed_list = pool.map(self.preprocess_text, texts)
+        return preprocessed_list
+
+    def process_temporal_window(self, df: pd.DataFrame, window_start: int) -> (List[List[str]], corpora.Dictionary, List[Any]):
+        """
+        Preprocess the data for this time window, build dictionary & corpus.
+        Returns (texts, dictionary, corpus).
         """
         if len(df) == 0:
             print(f"Warning: No documents found in window {window_start}-{window_start + self.window_size - 1}")
             return None, None, None
 
-        # Preprocess in parallel or single-threaded (shown single-threaded here)
-        texts = [self.preprocess_text(article) for article in df['article']]
+        # Instead of a for-loop, we do parallel preprocessing
+        articles = df['article'].tolist()
+        texts = self.parallel_preprocess_texts(articles)
+
+        # Build dictionary & filter
         dictionary = corpora.Dictionary(texts)
         dictionary.filter_extremes(no_below=5, no_above=0.5, keep_n=50000)
+
+        # Convert each preprocessed text to a BOW representation
         corpus = [dictionary.doc2bow(txt) for txt in texts]
 
         return texts, dictionary, corpus
+
 
     def train_window_model(
         self, 
