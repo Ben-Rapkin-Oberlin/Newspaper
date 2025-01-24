@@ -409,6 +409,10 @@ def process_window(start_year: int, window_size: int, analyzer: TemporalLDAAnaly
             total_articles += sample_size
             print(f"Sampled {sample_size} articles from {len(year_data)} total articles")
             print(f"Year load time: {time() - year_load_start:.2f}s")
+            
+            sample_output_dir = f'sampled_data/window_{self.window_size}'
+            os.makedirs(sample_output_dir, exist_ok=True)
+            window_data[year].to_csv(os.path.join(sample_output_dir, f'sample_{year}.csv'), index=False)
         
         del year_dataset
         del year_data
