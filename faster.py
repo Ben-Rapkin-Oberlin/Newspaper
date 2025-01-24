@@ -14,6 +14,7 @@ from typing import Dict, List, Tuple, Any
 from functools import partial
 import concurrent.futures
 import random
+import os
 # Custom stopwords remain the same
 CUSTOM_STOPS = {
     'faid', 'aud', 'iaid', 'ditto', 'fame', 'fold', 'ing', 'con', 
@@ -369,7 +370,6 @@ def process_article(args: Tuple[Dict, models.LdaModel, corpora.Dictionary, Tempo
                 prob = t_prob
                 break
         result[f'topic_{topic_idx + 1}_prob'] = prob
-    
     return result
 
 def process_yearly_data(dataset, year: str, model: models.LdaModel, 
@@ -392,9 +392,13 @@ def process_yearly_data(dataset, year: str, model: models.LdaModel,
         results = list(executor.map(process_article, process_args))
     
     df = pd.DataFrame(results)
-    output_file = f'cooccurrence_analysis_{year}_{window}.csv'
-    df.to_csv(output_file, index=False)
+    output_file = f'{year}_cooccurrence_analysis.csv'
+    if not os.path.exists(f'yearly_occurrence_data//window_{window}'):
+        os.makedirs(f'yearly_occurrence_data//window_{window}')
+
     
+    df.to_csv(f'yearly_occurrence_data//window_{window}//'+output_file, index=False)
+
     return df
 
 def main():
@@ -406,14 +410,14 @@ def main():
             nltk.download(resource)
 
     window_size = 5
-    num_processes = 6
-    sample_percentage = 20.0  # Adjust this value to sample different percentages
+    num_processes = 8
+    sample_percentage =10.0  # Adjust this value to sample different percentages
     analyzer = TemporalLDAAnalyzer(
         window_size=window_size, 
         num_processes=num_processes,
         sample_percentage=sample_percentage
     )
-    years = list(range(1800, 1809))
+    years = list(range(1800, 1803))
     dataset = load_dataset("dell-research-harvard/AmericanStories",
                           "subset_years",
                           year_list=[str(year) for year in years],
