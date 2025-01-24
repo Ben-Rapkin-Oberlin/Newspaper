@@ -3,13 +3,19 @@ import re
 import pandas as pd
 from datasets import load_dataset
 
+def unify_small_pox_variants(text: str) -> str:
+    """
+    Converts "small-pox", "small pox", etc. to "smallpox" (case-insensitive).
+    Ensures all variants become a single token "smallpox."
+    """
+    return re.sub(r'\bsmall[\-\s]+pox\b', 'smallpox', text, flags=re.IGNORECASE)
+
 def count_occurrences(text: str, word: str) -> int:
     """
     Counts how many times `word` appears in `text` (case-insensitive),
     matching whole words only.
     """
-    # E.g. using regex word boundaries, ignoring case
-    pattern = rf"\b{word}\b"
+    pattern = rf"\b{word}\b"  # Word boundary pattern
     return len(re.findall(pattern, text.lower()))
 
 def main():
@@ -61,12 +67,20 @@ def main():
         counts_list = []
         for _, row in df_sampled.iterrows():
             article_id = row["article_id"]
-            article_text = row["article"] if "article" in row else ""
-            
+            article_text = row.get("article", "")
+
+            # 1) Normalize "small-pox" / "small pox" => "smallpox"
+            article_text = unify_small_pox_variants(article_text)
+
+            # 2) Count literal "smallpox" mentions
             smallpox_count = count_occurrences(article_text, "smallpox")
-            # Combine "death" and "deaths" into one total
-            death_count = count_occurrences(article_text, "death") + count_occurrences(article_text, "deaths")
-            
+
+            # 3) Count "death" + "deaths"
+            death_count = (
+                count_occurrences(article_text, "death") +
+                count_occurrences(article_text, "deaths")
+            )
+
             counts_list.append({
                 "article_id": article_id,
                 "smallpox_count": smallpox_count,
