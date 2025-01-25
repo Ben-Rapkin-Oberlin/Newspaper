@@ -59,6 +59,32 @@ SEED_TOPICS = {
 }
 
 
+def unified_preprocess(text: str, stop_words: set, min_length: int = 3) -> list:
+    """
+    Preprocesses text for both LDA and co-occurrence:
+      1. Unifies "small-pox" / "small pox" => "smallpox"
+      2. Lowercases and strips punctuation
+      3. Tokenizes
+      4. Lemmatizes, removes stopwords, filters short tokens
+    """
+    # 1) unify “small-pox”, “small pox”, etc.
+    text = re.sub(r'\bsmall[-\s]+pox\b', 'smallpox', text, flags=re.IGNORECASE)
+    
+    # 2) remove punctuation except spaces, lowercasing
+    text = re.sub(r'[^a-zA-Z\s]+', ' ', text.lower()).strip()
+    
+    # 3) word_tokenize
+    tokens = word_tokenize(text)
+    
+    # 4) lemmatize, filter short & stopwords
+    lemmatizer = WordNetLemmatizer()
+    final_tokens = []
+    for tok in tokens:
+        if len(tok) > min_length and tok.isalpha() and tok not in stop_words:
+            final_tokens.append(lemmatizer.lemmatize(tok))
+    
+    return final_tokens
+
 def get_top_words_per_topic(model: models.LdaModel, num_words: int = 5) -> Dict[int, List[str]]:
     """
     Extract top N words for each topic from the LDA model.
@@ -99,9 +125,9 @@ def analyze_cooccurrences_bulk(
             window_slice = tokens[win_start:win_end]
 
             # If "death" or "deaths" appear in that window, increment
-            if 'death' in window_slice or 'deaths' in window_slice:
-                cooccurrences['death'] += 1
-
+            death_count_in_window = sum(t in ('death') for t in window_slice)
+            cooccurrences['death'] += death_count_in_window
+            
             # Update counts for the topic words
             for w in topic_words_set:
                 if w in window_slice:
@@ -153,30 +179,8 @@ class TemporalLDAAnalyzer:
         self.coherence_scores = {}
         
     def preprocess_text(self, text: str) -> List[str]:
-        """
-        Single-text preprocessing:
-          - Convert 'small-pox' / 'small pox' => 'smallpox'
-          - Lowercase & remove punctuation
-          - Tokenize
-          - Lemmatize, remove stopwords, filter short tokens
-        """
-        # 1) Unify small-pox, small pox, etc. => smallpox (case-insensitive)
-        text = re.sub(r'\bsmall[\-\s]+pox\b', 'smallpox', text, flags=re.IGNORECASE)
-
-        # 2) Lowercase & strip punctuation
-        text = re.sub(r'[^a-zA-Z\s]+|\s+', ' ', text.lower()).strip()
-
-        # 3) Tokenize
-        tokens = word_tokenize(text)
-
-        # 4) Lemmatize & filter
-        processed_tokens = []
-        for tok in tokens:
-            # e.g. remove tokens <= 3 letters if you want
-            if len(tok) > 3 and tok.isalpha() and tok not in self.stop_words:
-                processed_tokens.append(self.lemmatizer.lemmatize(tok))
-
-        return processed_tokens
+        # Just delegate to the unified function
+        return unified_preprocess(text, stop_words=self.stop_words, min_length=3)
 
     def parallel_preprocess_texts(self, texts: List[str]) -> List[List[str]]:
         """
@@ -204,7 +208,17 @@ class TemporalLDAAnalyzer:
 
         # Build dictionary & filter
         dictionary = corpora.Dictionary(texts)
-        dictionary.filter_extremes(no_below=5, no_above=0.5, keep_n=50000)
+        must_keep = ["smallpox", "death"]
+        for word in must_keep:
+            if word not in dictionary.token2id:
+                dictionary.add_documents([[word]])  # Force-add if absent
+
+        dictionary.filter_extremes(no_below=5, no_above=0.5,keep_n=50000)
+
+        # Re-check if they remain
+        for word in must_keep:
+            if word not in dictionary.token2id:
+                print(f"WARNING: {word} was removed by filter_extremes!")
 
         # Convert each preprocessed text to a BOW representation
         corpus = [dictionary.doc2bow(txt) for txt in texts]
@@ -325,14 +339,14 @@ def process_yearly_data_bulk(
         bows.append(bow)
 
         # For co-occurrence, we might want raw tokenization or a simpler approach:
-        raw_tokens = text.lower().split()  
-        token_lists_for_coocc.append(raw_tokens)
+       preproc_tokens = analyzer.preprocess_text(text)
+       token_lists_for_coocc.append(preproc_tokens)
 
     # 3) Analyze co-occurrences in bulk
     cooccur_results = analyze_cooccurrences_bulk(
         token_lists_for_coocc,
         list(all_topic_words),  # pass as list
-        window_size=10
+        window_size=20
     )
 
     # 4) Batch topic inference
