@@ -300,7 +300,8 @@ def process_yearly_data_bulk(
     dictionary: corpora.Dictionary,
     analyzer: TemporalLDAAnalyzer,
     window: int,
-    top_words_dict: Dict[int, List[str]]
+    top_words_dict: Dict[int, List[str]],
+    sample: float,
 ) -> pd.DataFrame:
     """
     Process an entire year's data in a single/bulk pass:
@@ -381,7 +382,7 @@ def process_yearly_data_bulk(
     df = pd.DataFrame(records)
     
     # 6) Write out to CSV
-    output_dir = f'yearly_occurrence_data/window_{window}'
+    output_dir = f'yearly_occurrence_data/window_{window}_{sample}'
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     output_file = f'{year}_cooccurrence_analysis.csv'
@@ -390,7 +391,7 @@ def process_yearly_data_bulk(
     return df
 
 
-def process_window(start_year: int, window_size: int, analyzer: TemporalLDAAnalyzer):
+def process_window(start_year: int, window_size: int, analyzer: TemporalLDAAnalyzer,sample):
     """
     A single window: load data for each year, sample, combine -> build dict, train LDA -> 
     then process each year in a bulk manner (co-occurrence & doc topic dist).
@@ -479,7 +480,8 @@ def process_window(start_year: int, window_size: int, analyzer: TemporalLDAAnaly
                 dictionary,
                 analyzer,
                 window_size,
-                top_words_cache
+                top_words_cache,
+                sample
             )
             futures.append((year_str, future))
 
@@ -520,8 +522,8 @@ def main():
     nltk.download('wordnet')
 
     window_size = 5
-    num_processes = 8
-    sample_percentage = 10.0
+    num_processes = 16
+    sample_percentage = 75.0
 
     print(f"\nInitializing analyzer with:")
     print(f"- Window size: {window_size} years")
@@ -534,14 +536,14 @@ def main():
         sample_percentage=sample_percentage
     )
 
-    start_year = 1885
-    end_year = 1890
+    start_year = 1920
+    end_year = 1930
     total_windows = (end_year - start_year) // window_size
 
     print(f"\nProcessing {total_windows} windows from {start_year} to {end_year}")
 
     for window_start in range(start_year, end_year, window_size):
-        process_window(window_start, window_size, analyzer)
+        process_window(window_start, window_size, analyzer,sample_percentage)
 
     print(f"\nTotal execution time: {time() - total_start:.2f}s")
 
