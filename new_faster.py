@@ -100,7 +100,7 @@ def get_top_words_per_topic(model: models.LdaModel, num_words: int = 5) -> Dict[
 def analyze_cooccurrences_bulk(
     token_lists: List[List[str]],
     topic_words: List[str],
-    window_size: int = 200
+    window_size: int = 20
 ) -> List[Dict[str, int]]:
     """
     Analyze co-occurrences with 'smallpox' in a bulk manner.
