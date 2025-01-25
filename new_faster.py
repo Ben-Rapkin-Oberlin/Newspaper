@@ -339,8 +339,8 @@ def process_yearly_data_bulk(
         bows.append(bow)
 
         # For co-occurrence, we might want raw tokenization or a simpler approach:
-       preproc_tokens = analyzer.preprocess_text(text)
-       token_lists_for_coocc.append(preproc_tokens)
+        preproc_tokens = analyzer.preprocess_text(text)
+        token_lists_for_coocc.append(preproc_tokens)
 
     # 3) Analyze co-occurrences in bulk
     cooccur_results = analyze_cooccurrences_bulk(
@@ -424,9 +424,10 @@ def process_window(start_year: int, window_size: int, analyzer: TemporalLDAAnaly
             print(f"Sampled {sample_size} articles from {len(year_data)} total articles")
             print(f"Year load time: {time() - year_load_start:.2f}s")
             
-            sample_output_dir = f'sampled_data/window_{window_size}'
-            os.makedirs(sample_output_dir, exist_ok=True)
-            window_data[year].to_csv(os.path.join(sample_output_dir, f'sample_{year}.csv'), index=False)
+            #To save sample:
+            #sample_output_dir = f'sampled_data/window_{window_size}'
+            #os.makedirs(sample_output_dir, exist_ok=True)
+            #window_data[year].to_csv(os.path.join(sample_output_dir, f'sample_{year}.csv'), index=False)
         
         del year_dataset
         del year_data
