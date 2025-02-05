@@ -1,25 +1,24 @@
 import pandas as pd
 
+# Read and filter the mortality data
+df = pd.read_csv("data/master_mortality_data_1900_1936_ucb.csv")
+df = df[["state_name", "year", "total_mortality", "small_pox"]]
+states = ["Maine", "Connecticut", "Indiana", "Massachusetts", "Michigan", 
+          "New Hampshire", "New Jersey", "Rhode Island", "New York"]
+df = df[df["state_name"].isin(states)]
 
-df=pd.read_csv("/usr/users/quota/students/2021/brapkin/Newspaper/master_mortality_data_1900_1936_ucb.csv")
-df=df[["state_name","year","total_mortality","small_pox"]]
-print(df.shape)
-a=["Maine","Connecticut","Indiana","Massachusetts","Michigan","New Hampshire","New Jersey","Rhode Island", "New York", ]
-df=df[df["state_name"].isin(a)]
-print(df.shape)
-print(df.columns)
+# Group by year and convert to DataFrame
+df = df.groupby('year')["small_pox"].sum().to_frame()
+df = df.reset_index()
 
-df=df.groupby('year')["small_pox"].sum()
+# Read the state population data
+dfstate = pd.read_csv("data/State Pops - Sheet1.csv")
 
-dfstate=pd.read_csv("/usr/users/quota/students/2021/brapkin/Newspaper/State Pops - Sheet1.csv")
-
-#dfstate=dfstate["Total_Ratio"]
-
-print(dfstate.shape)
-df['ratio']=dfstate["Total_Ratio"].values
-
-
-
-df.to_csv("test.csv")
+# Reverse the ratio values and add them to df
+reversed_ratios = dfstate["Total_Ratio"].values[:len(df)][::-1]  # [::-1] reverses the array
+df['ratio'] = reversed_ratios
 
 
+df['estimated_deaths'] = round(df['small_pox'] / df['ratio']).astype(int)
+# Save to CSV
+df.to_csv("data/death_estimates.csv", index=False)

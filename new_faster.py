@@ -517,12 +517,13 @@ def main():
     total_start = time()
 
     print("Initializing NLTK resources...")
-    nltk.download('punkt')
+    #nltk.download('punkt')
+    nltk.download('punkt_tab')
     nltk.download('stopwords')
     nltk.download('wordnet')
 
     window_size = 5
-    num_processes = 18
+    num_processes = 4
     sample_percentage = 10.0
 
     print(f"\nInitializing analyzer with:")
@@ -536,8 +537,8 @@ def main():
         sample_percentage=sample_percentage
     )
 
-    start_year = 1930
-    end_year = 1940
+    start_year = 1880
+    end_year = 1885
     total_windows = (end_year - start_year) // window_size
 
     print(f"\nProcessing {total_windows} windows from {start_year} to {end_year}")
