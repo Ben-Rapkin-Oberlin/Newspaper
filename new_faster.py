@@ -522,8 +522,8 @@ def main():
     nltk.download('wordnet')
 
     window_size = 5
-    num_processes = 16
-    sample_percentage = 75.0
+    num_processes = 18
+    sample_percentage = 10.0
 
     print(f"\nInitializing analyzer with:")
     print(f"- Window size: {window_size} years")
@@ -536,8 +536,8 @@ def main():
         sample_percentage=sample_percentage
     )
 
-    start_year = 1920
-    end_year = 1930
+    start_year = 1930
+    end_year = 1940
     total_windows = (end_year - start_year) // window_size
 
     print(f"\nProcessing {total_windows} windows from {start_year} to {end_year}")
