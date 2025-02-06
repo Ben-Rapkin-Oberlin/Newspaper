@@ -2,14 +2,14 @@ import os
 import pandas as pd
 
 # Base directory where the CSV files are stored.
-base_path = r"C:\Users\benra\Documents\Newspaper\yearly_occurrence_data\window_5_10.0"
+base_path = r"window_5_10.0"
 
 # List to hold the aggregated data for each year.
 aggregated_data = []
 
 
-start=1880
-end=1899
+start=1900
+end=1936
 # Loop over the years of interest.
 for year in range(start, end+1):  # 1900 to 1936 inclusive
     print(year)
@@ -81,7 +81,7 @@ if start>=1900:
     print("including truth")
     a="training_data"
     # Read the ground truth death estimates.
-    death_df = pd.read_csv(r"C:\Users\benra\Documents\Newspaper\data\death_estimates.csv")
+    death_df = pd.read_csv(r"/usr/users/quota/students/2021/brapkin/Newspaper/data/death_estimates.csv")
     print("\nDeath estimates loaded. Sample:")
     print(death_df.head())
 

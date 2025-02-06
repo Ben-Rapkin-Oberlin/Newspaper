@@ -506,7 +506,7 @@ def main():
     nltk.download('wordnet')
 
     window_size = 5
-    num_processes = 4
+    num_processes = 18
     sample_percentage = 10.0
 
     print(f"\nInitializing analyzer with:")
@@ -522,8 +522,8 @@ def main():
         extra_cooccur_targets=['death','pandemic', 'burial', 'outbreak', 'sick', 'died', 'plague', 'epidemic']   # additional words to count alongside the anchor
     )
 
-    start_year = 1800
-    end_year = 1805
+    start_year = 1915
+    end_year = 1940
     total_windows = (end_year - start_year) // window_size
 
     print(f"\nProcessing {total_windows} windows from {start_year} to {end_year}")

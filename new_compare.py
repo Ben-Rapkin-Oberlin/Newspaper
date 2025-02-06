@@ -22,8 +22,8 @@ n_leads = 1  # Change this to any positive integer.
 # ---------------------------
 # 2. TRAINING: CREATE LEAD FEATURES & TRAIN ML MODELS
 # ---------------------------
-train_path = r"yearly_occurrence_data\training_data_1900_1936.csv"
-
+#train_path = r"yearly_occurrence_data\training_data_1900_1936.csv"
+train_path =r"/usr/users/quota/students/2021/brapkin/Newspaper/yearly_occurrence_data/training_data_1900_1936.csv"
 # Load labeled training data.
 train_df = pd.read_csv(train_path)
 train_df = train_df.sort_values("year").reset_index(drop=True)
@@ -121,7 +121,10 @@ print("SVR R²:               {:.3f}".format(r2_svr))
 # ---------------------------
 # 3. LOAD UNLABELED TEST DATA FOR BACKCASTING (1880-1899)
 # ---------------------------
-test_path = r"yearly_occurrence_data\pred_data_1880_1899.csv"
+#test_path = r"yearly_occurrence_data\pred_data_1880_1899.csv"
+test_path =r"/usr/users/quota/students/2021/brapkin/Newspaper/yearly_occurrence_data/pred_data_1880_1899.csv"
+
+
 test_df = pd.read_csv(test_path)
 test_df = test_df.sort_values("year").reset_index(drop=True)
 # Note: test_df contains only static predictors (no 'estimated_deaths')

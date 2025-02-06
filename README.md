@@ -3,6 +3,19 @@ ghp _yLyeRuEpeVMj838Bq38sZyDrIuBZP02hG3GM
 
 
 
+1. Generalized.py: Set years, sample size, anchor, and words to count
+2.
+
+
+TODO:
+- Update Spreadsheet with more states
+- There create/process seem to have been duplicated on one another. We lost the script to get deaths by year.
+
+
+
+
+
+
 brapkin@ssdl137-31:/zfs/2021/brapkin/Newspaper$ python3 faster.py
 [nltk_data] Downloading package punkt to
 [nltk_data]     /usr/users/quota/students/2021/brapkin/nltk_data...
