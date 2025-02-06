@@ -1,19 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Combined script to forecast historical estimated deaths using several methods:
-    1. Linear Regression (with bootstrapped uncertainty)
-    2. GAM (using pyGAM with smooth terms only)
-    3. Bayesian Regression (using sklearn’s BayesianRidge)
-    4. Small GRU (with Monte Carlo dropout uncertainty)
-    
-An ensemble forecast is then computed by averaging the predictions from the four methods.
+Forecast historical estimated deaths using several methods:
+  1. Linear Regression (with bootstrapped uncertainty)
+  2. GAM (with smooth terms only)
+  3. Bayesian Regression (BayesianRidge)
+  4. ARIMA (univariate, ARIMA(1,1,1))
+  5. GRU (with Monte Carlo dropout uncertainty)
 
-This version:
-   - Reverses the order of the training and test data (so that the most recent observations come first).
-   - Uses a TimeSeriesSplit with a gap.
-   - Standardizes the features.
-   - Plots model performances on the training data.
+An ensemble forecast is computed by averaging the predictions from these five methods.
+
+Data are reversed (most recent observations come first) and features are standardized.
+Robust time-series cross-validation (with a gap) and additional performance plots are provided.
 """
 
 import numpy as np
@@ -29,8 +27,9 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import GRU, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
 from functools import reduce
-import sys
 import os
+import sys
+from statsmodels.tsa.arima.model import ARIMA
 
 #####################################
 # 1. Data Loading, Reversal & Preparation
@@ -69,20 +68,20 @@ target = "estimated_deaths"
 # Create DataFrames for modeling.
 X_train = train_df[features].copy()
 y_train = train_df[target].copy()
-X_test = test_df[features].copy()  # test data has no target
+X_test = test_df[features].copy()  # Test data has no target
 
-# Standardize features.
+# Standardize the features.
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)
 X_test_scaled = scaler.transform(X_test)
 
-# Convert back to DataFrame for models that require it.
+# Convert scaled arrays back to DataFrames.
 X_train_scaled_df = pd.DataFrame(X_train_scaled, columns=features, index=X_train.index)
 X_test_scaled_df = pd.DataFrame(X_test_scaled, columns=features, index=X_test.index)
 
-# For GRU, we work with NumPy arrays.
-X_train_gru = X_train_scaled  # shape (n_samples, n_features)
-X_test_gru = X_test_scaled
+# For GRU we work with numpy arrays.
+X_train_gru = X_train_scaled.copy()
+X_test_gru = X_test_scaled.copy()
 
 print(">>> Data preparation complete.\n")
 
@@ -95,7 +94,7 @@ tscv = TimeSeriesSplit(n_splits=n_splits, gap=1)
 print(f">>> Using {n_splits} splits for cross-validation.\n")
 
 #####################################
-# 3. Model 1: Linear Regression with Bootstrapped Uncertainty
+# 3. Model 1: Linear Regression (with bootstrapped uncertainty)
 #####################################
 print(">>> Starting Linear Regression cross-validation...")
 lr_mse_scores = []
@@ -197,7 +196,54 @@ bayes_train_preds = bayes_final.predict(X_train_scaled_df)
 print(">>> Bayesian Regression complete.\n")
 
 #####################################
-# 6. Model 4: Small GRU with Monte Carlo Dropout
+# 6. Model 4: ARIMA Model
+#####################################
+print(">>> Starting ARIMA cross-validation...")
+
+# ARIMA is univariate. For ARIMA we use the target series in chronological order.
+# Since our train_df is reversed (most recent first), we reverse it back.
+y_train_arima = train_df[target].iloc[::-1].reset_index(drop=True)  # chronological order (oldest to newest)
+
+# Use a TimeSeriesSplit for ARIMA on the target series.
+tscv_arima = TimeSeriesSplit(n_splits=n_splits, gap=1)
+arima_mse_scores = []
+arima_cv_preds = []
+arima_order = (1, 1, 1)  # You may adjust this order as needed.
+
+for fold, (train_idx, val_idx) in enumerate(tscv_arima.split(y_train_arima)):
+    print(f"   Processing ARIMA fold {fold+1}...")
+    train_series = y_train_arima.iloc[train_idx]
+    val_series = y_train_arima.iloc[val_idx]
+    # Fit ARIMA on training portion.
+    try:
+        model_arima = ARIMA(train_series, order=arima_order).fit()
+        # Forecast for the length of the validation set.
+        forecast = model_arima.forecast(steps=len(val_series))
+        mse_val = mean_squared_error(val_series, forecast)
+    except Exception as e:
+        print(f"      ARIMA fold {fold+1} failed with error: {e}")
+        mse_val = np.nan
+        forecast = np.full(len(val_series), np.nan)
+    arima_mse_scores.append(mse_val)
+    arima_cv_preds.append(forecast)
+    print(f"      Fold {fold+1} MSE: {mse_val:.2f}")
+
+# Remove any NaNs before averaging.
+arima_cv_mse = np.nanmean(arima_mse_scores)
+print(f">>> Average CV MSE (ARIMA): {arima_cv_mse:.2f}")
+
+print(">>> Fitting final ARIMA model on full training target series...")
+# Fit ARIMA on the entire chronological target series.
+arima_final_model = ARIMA(y_train_arima, order=arima_order).fit()
+# Forecast for the number of test observations.
+n_test = len(X_test)
+arima_forecast = arima_final_model.forecast(steps=n_test)
+# Reverse the ARIMA forecast to match our reversed order.
+arima_test_preds = arima_forecast.iloc[::-1].to_numpy()
+print(">>> ARIMA complete.\n")
+
+#####################################
+# 7. Model 5: Small GRU with Monte Carlo Dropout
 #####################################
 print(">>> Preparing GRU training sequences...")
 
@@ -229,10 +275,9 @@ gru_epochs = 200
 gru_batch_size = 4
 gru_patience = 10
 
-# Use a separate TimeSeriesSplit for sequence data.
 tscv_seq = TimeSeriesSplit(n_splits=n_splits, gap=1)
 for fold, (train_idx, val_idx) in enumerate(tscv_seq.split(X_seq)):
-    print(f"   Processing fold {fold+1}...")
+    print(f"   Processing GRU fold {fold+1}...")
     model = build_gru_model(input_shape=(window_size, X_seq.shape[2]))
     early_stop = EarlyStopping(monitor='loss', patience=gru_patience, restore_best_weights=True)
     model.fit(X_seq[train_idx], y_seq[train_idx],
@@ -265,26 +310,30 @@ gru_mean_train, gru_std_train = predict_mc_dropout(gru_model_full, X_seq, n_iter
 print(">>> GRU predictions with MC dropout (first 5 sequences):")
 for i in range(5):
     print(f"   Predicted: {gru_mean_train[i]:.2f} ± {gru_std_train[i]:.2f}")
-print(">>> GRU model complete.\n")
+print(">>> GRU complete.\n")
 
 #####################################
-# 7. Final Model Fitting & Backcasting on Test Data
+# 8. Final Model Fitting & Backcasting on Test Data & Ensemble Forecasting
 #####################################
 print(">>> Fitting final models on full training data and backcasting on test data...")
 
-# Final predictions:
+# Linear Regression final prediction.
 print("   Fitting final Linear Regression...")
 lr_final = LinearRegression().fit(X_train_scaled_df, y_train)
 lr_test_preds = lr_final.predict(X_test_scaled_df)
 
+# GAM final prediction.
 print("   Fitting final GAM model...")
 gam_final = LinearGAM(gam_terms).fit(X_train_scaled_df.values, y_train.values)
 gam_test_preds = gam_final.predict(X_test_scaled_df.values)
 
+# Bayesian Regression final prediction.
 print("   Fitting final Bayesian Regression model...")
 bayes_final = BayesianRidge().fit(X_train_scaled_df, y_train)
 bayes_test_preds = bayes_final.predict(X_test_scaled_df)
 
+# ARIMA final prediction is already computed in arima_test_preds.
+# GRU final prediction:
 print("   Fitting final GRU model backcasting on test data...")
 def create_test_sequences(X, window_size=3):
     Xs = []
@@ -294,16 +343,16 @@ def create_test_sequences(X, window_size=3):
 
 X_test_seq = create_test_sequences(X_test_gru, window_size=window_size)
 gru_mean_test, gru_std_test = predict_mc_dropout(gru_model_full, X_test_seq, n_iter=100)
-
-# Pad GRU predictions to match length.
+# Pad GRU predictions to match the length of other forecasts.
 gru_full_preds = np.full(len(lr_test_preds), np.nan)
 gru_full_preds[:len(gru_mean_test)] = gru_mean_test
 
 # Assemble predictions for ensemble.
 ensemble_dict = {
-    'LR': lr_test_preds,
+    'Linear': lr_test_preds,
     'GAM': gam_test_preds,
     'Bayesian': bayes_test_preds,
+    'ARIMA': arima_test_preds,
     'GRU': gru_full_preds
 }
 ensemble_array = np.vstack([ensemble_dict[m] for m in ensemble_dict])
@@ -312,13 +361,14 @@ ensemble_mean = np.nanmean(ensemble_array, axis=0)
 print(">>> Final backcast predictions:")
 print("Linear Regression (first 5):", lr_test_preds[:5])
 print("GAM (first 5):", gam_test_preds[:5])
-print("Bayesian (first 5):", bayes_test_preds[:5])
+print("Bayesian Regression (first 5):", bayes_test_preds[:5])
+print("ARIMA (first 5):", arima_test_preds[:5])
 print("GRU (first 5):", gru_full_preds[:5])
 print("Ensemble (first 5):", ensemble_mean[:5])
 print(">>> Final model fitting and backcasting complete.\n")
 
 #####################################
-# 8. Plotting Model Performances
+# 9. Plotting Model Performances
 #####################################
 print(">>> Plotting model performance comparisons...")
 
@@ -328,8 +378,15 @@ plt.plot(train_df['year'], y_train, 'ko-', label='Actual (Training)')
 plt.plot(train_df['year'], lr_final.predict(X_train_scaled_df), 'b--', label='Linear Regression')
 plt.plot(train_df['year'], gam_final.predict(X_train_scaled_df.values), 'r-.', label='GAM')
 plt.plot(train_df['year'], bayes_final.predict(X_train_scaled_df), 'g:', label='Bayesian Regression')
-# For GRU, plot the predictions for the training sequences (aligned with the corresponding time stamps)
-# We plot the mean GRU predictions on the training set for indices [window_size:]
+# For ARIMA, obtain in-sample fitted values.
+try:
+    arima_fitted = arima_final_model.predict(start=0, end=len(y_train_arima)-1)
+    # Reverse to match reversed order.
+    arima_fitted_reversed = arima_fitted.iloc[::-1].to_numpy()
+    plt.plot(train_df['year'], arima_fitted_reversed, 'c--', label='ARIMA')
+except Exception as e:
+    print("ARIMA in-sample predictions failed:", e)
+# For GRU, plot the mean predictions on the training sequences.
 plt.plot(train_df['year'][window_size:], gru_mean_train, 'm--', label='GRU (MC dropout)')
 plt.xlabel("Year (Reversed Order)")
 plt.ylabel("Estimated Deaths")
@@ -343,13 +400,14 @@ cv_mse = {
     'Linear Regression': lr_cv_mse,
     'GAM': gam_cv_mse,
     'Bayesian Regression': bayes_cv_mse,
+    'ARIMA': arima_cv_mse,
     'GRU': gru_cv_mse
 }
 plt.figure(figsize=(8, 6))
-plt.bar(cv_mse.keys(), cv_mse.values(), color=['blue', 'red', 'green', 'magenta'])
+plt.bar(cv_mse.keys(), cv_mse.values(), color=['blue', 'red', 'green', 'cyan', 'magenta'])
 plt.ylabel("Average CV MSE")
 plt.title("Cross-Validation MSE Comparison")
-plt.yscale("log")  # Use logarithmic scale if errors vary greatly
+plt.yscale("log")  # Logarithmic scale if errors vary greatly
 plt.show()
 
 print(">>> Plotting complete.")
