@@ -7,8 +7,8 @@ base_path = r"window_5_10.0"
 # List to hold the aggregated data for each year.
 aggregated_data = []
 
-start = 1900
-end = 1936
+start = 1870
+end = 1899
 
 # Loop over the years of interest.
 for year in range(start, end + 1):
@@ -30,11 +30,15 @@ for year in range(start, end + 1):
     # Total word count across articles.
     total_word_count = df['word_count'].sum() if 'word_count' in df.columns else None
 
-    # -----------------------------
-    # 1. Aggregate co-occurrence totals by topic.
-    # -----------------------------
+    # ---------------------------------------
+    # 1. Aggregate generic topic co-occurrence counts.
+    #    (These columns are named like "cooccur_topic3_arrived".)
+    #    They will be aggregated per topic so that the specific word ("arrived")
+    #    does not appear in the output.
+    # ---------------------------------------
     topic_totals = {}
     for topic in range(1, 6):
+        # Select all columns that start with "cooccur_topic{n}_"
         regex_pattern = f"^cooccur_topic{topic}_"
         topic_cols = df.filter(regex=regex_pattern).columns
         if not topic_cols.empty:
@@ -46,9 +50,9 @@ for year in range(start, end + 1):
             topic_sum / total_word_count if total_word_count and total_word_count > 0 else None
         )
 
-    # -----------------------------
+    # ---------------------------------------
     # 2. Compute average topic probabilities.
-    # -----------------------------
+    # ---------------------------------------
     topic_avg_probs = {}
     for topic in range(1, 6):
         col_name = f"topic_{topic}_prob"
@@ -57,30 +61,24 @@ for year in range(start, end + 1):
         else:
             topic_avg_probs[f"topic{topic}_avg_prob"] = None
 
-    # -----------------------------
-    # 3. Aggregate all co-occurrence features.
-    #    (This includes any column starting with 'cooccur_' or 'smallpox_',
-    #     which makes it general to any new words you add later.)
-    # -----------------------------
-    # Exclude the columns we don’t want to aggregate.
-    cooccurrence_cols = [
-        col for col in df.columns
-        if col not in ['id', 'word_count']
-           and (col.startswith('cooccur_') or col.startswith('smallpox_'))
-    ]
-
-    aggregated_cooccurrence = {}
-    for col in cooccurrence_cols:
+    # ---------------------------------------
+    # 3. Aggregate specific co-occurrence features.
+    #    Only those columns you want to keep individually (like "smallpox_pandemic_cooccurrences")
+    #    are aggregated here.
+    # ---------------------------------------
+    specific_cooccurrence = {}
+    # In this example, we assume that the specific words have names starting with "smallpox_".
+    specific_cols = [col for col in df.columns if col.startswith("smallpox_")]
+    for col in specific_cols:
         col_sum = df[col].sum()
         ratio = col_sum / total_word_count if total_word_count and total_word_count > 0 else None
-        # Store both the aggregated sum and its ratio.
-        aggregated_cooccurrence[col] = col_sum
-        aggregated_cooccurrence[col + "_ratio"] = ratio
+        specific_cooccurrence[col] = col_sum
+        specific_cooccurrence[col + "_ratio"] = ratio
 
-    # -----------------------------
-    # 4. Combine all aggregated information into one dictionary.
-    #    (Note: we do not include the "id" column.)
-    # -----------------------------
+    # ---------------------------------------
+    # 4. Combine all aggregated information.
+    #    (Note: We do not include the "id" column and we collapse topic words.)
+    # ---------------------------------------
     year_data = {
         "year": year,
         "n_articles": n_articles,
@@ -88,7 +86,7 @@ for year in range(start, end + 1):
     }
     year_data.update(topic_totals)
     year_data.update(topic_avg_probs)
-    year_data.update(aggregated_cooccurrence)
+    year_data.update(specific_cooccurrence)
 
     aggregated_data.append(year_data)
 
@@ -98,22 +96,19 @@ agg_df = pd.DataFrame(aggregated_data)
 # Optionally, sort the DataFrame by year.
 agg_df = agg_df.sort_values(by="year")
 
-# -----------------------------
+# ---------------------------------------
 # 5. Merge with Death Estimates (if applicable).
 #    (Your original logic merges truth data only for years >= 1900.)
-# -----------------------------
+# ---------------------------------------
 if start >= 1900:
     print("Including truth data")
     a = "training_data"
-    # Read the ground truth death estimates.
     death_df = pd.read_csv(r"/usr/users/quota/students/2021/brapkin/Newspaper/data/death_estimates.csv")
     print("\nDeath estimates loaded. Sample:")
     print(death_df.head())
 
-    # Keep only the 'year' and 'estimated_deaths' columns.
+    # Only keep the 'year' and 'estimated_deaths' columns.
     death_subset = death_df[['year', 'estimated_deaths']]
-
-    # Merge on the 'year' column.
     final_df = pd.merge(agg_df, death_subset, on='year', how='inner')
 else:
     print("No truth data to merge")
@@ -123,9 +118,9 @@ else:
 print("\nFinal aggregated dataset sample:")
 print(final_df.head())
 
-# -----------------------------
+# ---------------------------------------
 # 6. Save the aggregated data to a new CSV file.
-# -----------------------------
+# ---------------------------------------
 output_filename = f"{a}_{start}_{end}.csv"
 final_df.to_csv(output_filename, index=False)
 print(f"Aggregated yearly data saved to: {output_filename}")
