@@ -10,14 +10,14 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.svm import SVR
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, r2_score
 import xgboost as xgb
 
 # ---------------------------
 # User-Defined Settings
 # ---------------------------
 # Set the number of lead features you want to use.
-n_leads = 1  # You can change this to any positive integer.
+n_leads = 1  # Change this to any positive integer.
 
 # ---------------------------
 # 2. TRAINING: CREATE LEAD FEATURES & TRAIN ML MODELS
@@ -50,7 +50,7 @@ rf_full.fit(train_df[cols_for_importance], train_df['estimated_deaths'])
 importances = rf_full.feature_importances_
 feature_names = np.array(cols_for_importance)
 
-# Here we select the top features. (You can adjust the number as needed.)
+# Here we select the top features (or all if fewer than 5 are available).
 top_n = min(8, len(feature_names))
 indices = np.argsort(importances)[::-1][:top_n]
 top_features = feature_names[indices]
@@ -92,6 +92,33 @@ svr_model = SVR(kernel='rbf', C=1.0, epsilon=0.1)
 svr_model.fit(X_train_ml_scaled, y_train_ml_scaled)
 
 # ---------------------------
+# 2d. Compute and Print Training R² Values
+# ---------------------------
+# For Linear Regression (inverse-transform predictions to original space)
+pred_lr_scaled_train = lr_model.predict(X_train_ml_scaled)
+pred_lr_train = scaler_y.inverse_transform(pred_lr_scaled_train.reshape(-1, 1)).flatten()
+r2_lr = r2_score(y_train_ml, pred_lr_train)
+
+# For Random Forest
+pred_rf_train = rf_model.predict(X_train_ml)
+r2_rf = r2_score(y_train_ml, pred_rf_train)
+
+# For XGBoost
+pred_xgb_train = xgb_model.predict(X_train_ml)
+r2_xgb = r2_score(y_train_ml, pred_xgb_train)
+
+# For SVR (inverse-transform predictions)
+pred_svr_scaled_train = svr_model.predict(X_train_ml_scaled)
+pred_svr_train = scaler_y.inverse_transform(pred_svr_scaled_train.reshape(-1, 1)).flatten()
+r2_svr = r2_score(y_train_ml, pred_svr_train)
+
+print("\nTraining R² values:")
+print("Linear Regression R²: {:.3f}".format(r2_lr))
+print("Random Forest R²:     {:.3f}".format(r2_rf))
+print("XGBoost R²:           {:.3f}".format(r2_xgb))
+print("SVR R²:               {:.3f}".format(r2_svr))
+
+# ---------------------------
 # 3. LOAD UNLABELED TEST DATA FOR BACKCASTING (1880-1899)
 # ---------------------------
 test_path = r"yearly_occurrence_data\pred_data_1880_1899.csv"
@@ -103,15 +130,14 @@ test_df.set_index("year", inplace=True)
 # ---------------------------
 # 4. RECURSIVE BACKCASTING ON THE TEST SET
 # ---------------------------
-# For recursive backcasting, we need an initial lead window.
-# Instead of hardcoding the years, we derive the first n_leads years from the training data.
+# Initialize the lead window from the first n_leads years in the training data.
 train_orig = pd.read_csv(train_path)
 train_orig = train_orig.sort_values("year").reset_index(drop=True)
 train_orig.set_index("year", inplace=True)
 lead_years = list(train_orig.index[:n_leads])
 lead_window = [train_orig.loc[yr, "estimated_deaths"] for yr in lead_years]
 
-# We predict in descending order (from the latest test year down to the earliest).
+# Predict in descending order.
 test_years_desc = sorted(test_df.index, reverse=True)
 
 # Dictionaries to store predictions for each model.
@@ -124,24 +150,24 @@ for year in test_years_desc:
     # Get static predictor values.
     static_vals = test_df.loc[[year], top_features]
     
-    # Create a DataFrame for the lead values with the same index.
+    # Create DataFrame for lead values.
     current_leads_df = pd.DataFrame(
         np.array(lead_window).reshape(1, -1),
         columns=[f'lead_{i}' for i in range(1, n_leads+1)],
         index=static_vals.index
     )
     
-    # Combine static predictors and lead features.
+    # Combine static and lead features.
     X_input_df = pd.concat([static_vals, current_leads_df], axis=1)
-    X_input_df = X_input_df[ml_features]  # Ensure correct column order.
+    X_input_df = X_input_df[ml_features]
     
     if X_input_df.isnull().any().any():
         X_input_df = X_input_df.fillna(0)
     
-    # Scale input for models that require scaling.
+    # Scale inputs for scaled models.
     X_input_scaled = scaler_X.transform(X_input_df)
     
-    # Generate predictions from each model.
+    # Generate predictions.
     pred_lr_scaled = lr_model.predict(X_input_scaled)
     pred_lr = scaler_y.inverse_transform(pred_lr_scaled.reshape(-1, 1)).flatten()[0]
     
@@ -157,7 +183,7 @@ for year in test_years_desc:
     preds_xgb[year] = pred_xgb
     preds_svr[year] = pred_svr
     
-    # Update lead window using the LR prediction.
+    # Update the lead window using the LR prediction.
     lead_window = [pred_lr] + lead_window[:-1]
 
 # Convert prediction dictionaries to Series (sorted in ascending order).
@@ -178,7 +204,7 @@ train_orig2.set_index("year", inplace=True)
 # Define validation years as the earliest val_horizon years.
 val_years = sorted(train_orig2.index)[:val_horizon]
 
-# Create a lead window from the next n_leads years.
+# Initialize the validation lead window from the next n_leads years.
 lead_years_val = list(train_orig2.index[val_horizon:val_horizon+n_leads])
 lead_window_val = [train_orig2.loc[yr, "estimated_deaths"] for yr in lead_years_val]
 
