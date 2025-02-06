@@ -8,8 +8,8 @@ base_path = r"window_5_10.0"
 aggregated_data = []
 
 
-start=1900
-end=1936
+start=1870
+end=1899
 # Loop over the years of interest.
 for year in range(start, end+1):  # 1900 to 1936 inclusive
     print(year)
@@ -103,5 +103,5 @@ print(final_df.head())
 
 # Save the aggregated data to a new CSV file.
 #output_file = os.path.join(base_path, "yearly_aggregated_data_1900_1936.csv")
-final_df.to_csv(f"yearly_occurrence_data\{a}_{start}_{end}.csv", index=False)
-print(f"Aggregated yearly data saved to: yearly_occurrence_data\{a}_{start}_{end}.csv")
+final_df.to_csv(f"{a}_{start}_{end}.csv", index=False)
+print(f"Aggregated yearly data saved to: {a}_{start}_{end}.csv")
