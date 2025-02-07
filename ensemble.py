@@ -113,7 +113,7 @@ for i in range(1, X_train_ml_scaled.shape[1]):
     terms += s(i)
 # Use PoissonGAM on the raw target data
 gam_model = PoissonGAM(terms)
-gam_model.gridsearch(X_train_ml_scaled, y_train_ml
+gam_model.gridsearch(X_train_ml_scaled, y_train_ml)
 
 
 # ---------------------------
