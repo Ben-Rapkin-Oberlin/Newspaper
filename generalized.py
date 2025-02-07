@@ -218,7 +218,7 @@ class TemporalLDAAnalyzer:
             if word not in dictionary.token2id:
                 dictionary.add_documents([[word]])  # Force-add if absent
 
-        dictionary.filter_extremes(no_below=5, no_above=0.5, keep_n=50000)
+        dictionary.filter_extremes(no_below=2, no_above=0.5, keep_n=80000)
 
         for word in set(must_keep):
             if word not in dictionary.token2id:
@@ -515,9 +515,7 @@ def main():
     print(f"- Sample percentage: {sample_percentage}%")
     # You can change the co-occurrence anchor and extra target words here.
     analyzer = TemporalLDAAnalyzer(
-        extra_cooccur_targets['outbreak', 'epidemic', 'death', 'died', 'mortality', 'sick', 'kill', 'pandemic', 
-            'endemic', 'plague', 'burial', 'grave', 'obituary', 'case', 'fatality', 'deceased', 'casualty', 
-            'perish', 'afflicted', 'victim', 'succumb', 'infection', 'disease', 'contagion', 'suffering']
+        extra_cooccur_targets=['outbreak', 'epidemic', 'death', 'died', 'mortality', 'sick', 'kill', 'pandemic','endemic', 'plague', 'burial', 'grave', 'obituary', 'case', 'fatality', 'deceased', 'casualty','perish', 'afflicted', 'victim', 'succumb', 'infection', 'disease', 'contagion', 'suffering'],
         window_size=window_size,
         num_processes=num_processes,
         sample_percentage=sample_percentage,
@@ -525,8 +523,8 @@ def main():
   
     )
 
-    start_year = 1915
-    end_year = 1940
+    start_year = 1870
+    end_year = 1915
     total_windows = (end_year - start_year) // window_size
 
     print(f"\nProcessing {total_windows} windows from {start_year} to {end_year}")

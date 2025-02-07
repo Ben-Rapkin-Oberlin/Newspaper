@@ -7,8 +7,8 @@ base_path = r"window_5_10.0"
 # List to hold the aggregated data for each year.
 aggregated_data = []
 
-start = 1900
-end = 1936
+start = 1870
+end = 1899
 
 # Loop over the years of interest.
 for year in range(start, end + 1):
