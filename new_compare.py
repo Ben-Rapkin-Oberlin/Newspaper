@@ -122,7 +122,7 @@ print("SVR R²:               {:.3f}".format(r2_svr))
 # 3. LOAD UNLABELED TEST DATA FOR BACKCASTING (1880-1899)
 # ---------------------------
 #test_path = r"yearly_occurrence_data\pred_data_1880_1899.csv"
-test_path =r"/usr/users/quota/students/2021/brapkin/Newspaper/yearly_occurrence_data/pred_data_1880_1899.csv"
+test_path =r"/usr/users/quota/students/2021/brapkin/Newspaper/yearly_occurrence_data/pred_data_1870_1899.csv"
 
 
 test_df = pd.read_csv(test_path)
