@@ -108,7 +108,9 @@ gpr_model.fit(X_train_ml_scaled, y_train_ml_scaled)
 
 ## Generalized Additive Model (GAM) using pyGAM
 # Build a model with a smoothing term for each predictor.
-terms = sum([s(i) for i in range(X_train_ml_scaled.shape[1])])
+terms = s(0)
+for i in range(1, X_train_ml_scaled.shape[1]):
+    terms += s(i)
 gam_model = LinearGAM(terms)
 # Optimize the smoothing parameters using grid search.
 gam_model.gridsearch(X_train_ml_scaled, y_train_ml_scaled)
