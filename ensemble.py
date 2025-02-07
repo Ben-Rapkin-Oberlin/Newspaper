@@ -18,11 +18,8 @@ import xgboost as xgb
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel
 
-# Generalized Additive Model (GAM) via pyGAM
+# Generalized Additive Model (GAM) using pyGAM
 from pygam import LinearGAM, s
-
-# Multivariate Adaptive Regression Splines (MARS)
-from pyearth import Earth
 
 # ---------------------------
 # User-Defined Settings
@@ -113,12 +110,8 @@ gpr_model.fit(X_train_ml_scaled, y_train_ml_scaled)
 # Build a model with a smoothing term for each predictor.
 terms = sum([s(i) for i in range(X_train_ml_scaled.shape[1])])
 gam_model = LinearGAM(terms)
-# Using gridsearch to optimize the smoothing parameters.
+# Optimize the smoothing parameters using grid search.
 gam_model.gridsearch(X_train_ml_scaled, y_train_ml_scaled)
-
-## Multivariate Adaptive Regression Splines (MARS)
-mars_model = Earth()
-mars_model.fit(X_train_ml, y_train_ml)
 
 # ---------------------------
 # 2d. Compute and Print Training R² Values
@@ -175,7 +168,6 @@ preds_xgb = {}
 preds_svr = {}
 preds_gpr = {}
 preds_gam = {}
-preds_mars = {}
 
 # Predict in descending order.
 test_years_desc = sorted(test_df.index, reverse=True)
@@ -218,8 +210,6 @@ for year in test_years_desc:
     pred_gam_scaled = gam_model.predict(X_input_scaled)
     pred_gam = scaler_y.inverse_transform(pred_gam_scaled.reshape(-1, 1)).flatten()[0]
     
-    pred_mars = mars_model.predict(X_input_df)[0]
-    
     # Save predictions.
     preds_lr[year] = pred_lr
     preds_rf[year] = pred_rf
@@ -227,7 +217,6 @@ for year in test_years_desc:
     preds_svr[year] = pred_svr
     preds_gpr[year] = pred_gpr
     preds_gam[year] = pred_gam
-    preds_mars[year] = pred_mars
     
     # Update the lead window using the LR prediction.
     lead_window = [pred_lr] + lead_window[:-1]
@@ -240,7 +229,6 @@ preds_xgb_series = pd.Series({yr: preds_xgb[yr] for yr in years_sorted})
 preds_svr_series = pd.Series({yr: preds_svr[yr] for yr in years_sorted})
 preds_gpr_series = pd.Series({yr: preds_gpr[yr] for yr in years_sorted})
 preds_gam_series = pd.Series({yr: preds_gam[yr] for yr in years_sorted})
-preds_mars_series = pd.Series({yr: preds_mars[yr] for yr in years_sorted})
 
 # ---------------------------
 # 5. VALIDATION BACKCASTING SIMULATION FROM TRAINING DATA
@@ -264,7 +252,6 @@ preds_xgb_val = {}
 preds_svr_val = {}
 preds_gpr_val = {}
 preds_gam_val = {}
-preds_mars_val = {}
 
 for year in sorted(val_years, reverse=True):
     static_vals = train_orig2.loc[[year], top_features]
@@ -295,15 +282,12 @@ for year in sorted(val_years, reverse=True):
     pred_gam_scaled_val = gam_model.predict(X_input_scaled)
     pred_gam_val = scaler_y.inverse_transform(pred_gam_scaled_val.reshape(-1, 1)).flatten()[0]
     
-    pred_mars_val = mars_model.predict(X_input_df)[0]
-    
     preds_lr_val[year] = pred_lr_val
     preds_rf_val[year] = pred_rf_val
     preds_xgb_val[year] = pred_xgb_val
     preds_svr_val[year] = pred_svr_val
     preds_gpr_val[year] = pred_gpr_val
     preds_gam_val[year] = pred_gam_val
-    preds_mars_val[year] = pred_mars_val
     
     # Update validation lead window using the LR prediction.
     lead_window_val = [pred_lr_val] + lead_window_val[:-1]
@@ -315,7 +299,6 @@ preds_xgb_val_series = pd.Series({yr: preds_xgb_val[yr] for yr in sorted(preds_x
 preds_svr_val_series = pd.Series({yr: preds_svr_val[yr] for yr in sorted(preds_svr_val.keys())})
 preds_gpr_val_series = pd.Series({yr: preds_gpr_val[yr] for yr in sorted(preds_gpr_val.keys())})
 preds_gam_val_series = pd.Series({yr: preds_gam_val[yr] for yr in sorted(preds_gam_val.keys())})
-preds_mars_val_series = pd.Series({yr: preds_mars_val[yr] for yr in sorted(preds_mars_val.keys())})
 
 # Get the actual target values for the validation years.
 actual_val = train_orig2.loc[preds_lr_val_series.index, "estimated_deaths"]
@@ -327,7 +310,6 @@ mae_xgb  = mean_absolute_error(actual_val, preds_xgb_val_series)
 mae_svr  = mean_absolute_error(actual_val, preds_svr_val_series)
 mae_gpr  = mean_absolute_error(actual_val, preds_gpr_val_series)
 mae_gam  = mean_absolute_error(actual_val, preds_gam_val_series)
-mae_mars = mean_absolute_error(actual_val, preds_mars_val_series)
 
 epsilon = 1e-6  # small constant to avoid division by zero in weight calculation
 inv_lr   = 1 / (mae_lr   + epsilon)
@@ -336,8 +318,7 @@ inv_xgb  = 1 / (mae_xgb  + epsilon)
 inv_svr  = 1 / (mae_svr  + epsilon)
 inv_gpr  = 1 / (mae_gpr  + epsilon)
 inv_gam  = 1 / (mae_gam  + epsilon)
-inv_mars = 1 / (mae_mars + epsilon)
-total_inv = inv_lr + inv_rf + inv_xgb + inv_svr + inv_gpr + inv_gam + inv_mars
+total_inv = inv_lr + inv_rf + inv_xgb + inv_svr + inv_gpr + inv_gam
 
 w_lr   = inv_lr   / total_inv
 w_rf   = inv_rf   / total_inv
@@ -345,7 +326,6 @@ w_xgb  = inv_xgb  / total_inv
 w_svr  = inv_svr  / total_inv
 w_gpr  = inv_gpr  / total_inv
 w_gam  = inv_gam  / total_inv
-w_mars = inv_mars / total_inv
 
 print("\nValidation MAE for individual models:")
 print("Linear Regression MAE: {:.3f}".format(mae_lr))
@@ -354,7 +334,6 @@ print("XGBoost MAE:           {:.3f}".format(mae_xgb))
 print("SVR MAE:               {:.3f}".format(mae_svr))
 print("GPR MAE:               {:.3f}".format(mae_gpr))
 print("GAM MAE:               {:.3f}".format(mae_gam))
-print("MARS MAE:              {:.3f}".format(mae_mars))
 
 print("\nComputed ensemble weights based on validation MAE:")
 print("Linear Regression: {:.3f}".format(w_lr))
@@ -363,7 +342,6 @@ print("XGBoost:           {:.3f}".format(w_xgb))
 print("SVR:               {:.3f}".format(w_svr))
 print("GPR:               {:.3f}".format(w_gpr))
 print("GAM:               {:.3f}".format(w_gam))
-print("MARS:              {:.3f}".format(w_mars))
 
 # Compute ensemble prediction on the validation set.
 ensemble_val_series = (w_lr   * preds_lr_val_series +
@@ -371,8 +349,7 @@ ensemble_val_series = (w_lr   * preds_lr_val_series +
                        w_xgb  * preds_xgb_val_series +
                        w_svr  * preds_svr_val_series +
                        w_gpr  * preds_gpr_val_series +
-                       w_gam  * preds_gam_val_series +
-                       w_mars * preds_mars_val_series)
+                       w_gam  * preds_gam_val_series)
 
 mae_ensemble = mean_absolute_error(actual_val, ensemble_val_series)
 print("Ensemble MAE on validation set: {:.3f}".format(mae_ensemble))
@@ -385,8 +362,7 @@ ensemble_series = (w_lr   * preds_lr_series +
                    w_xgb  * preds_xgb_series +
                    w_svr  * preds_svr_series +
                    w_gpr  * preds_gpr_series +
-                   w_gam  * preds_gam_series +
-                   w_mars * preds_mars_series)
+                   w_gam  * preds_gam_series)
 
 # ---------------------------
 # 7. PLOTTING THE RESULTS
@@ -417,10 +393,6 @@ plt.plot(
 plt.plot(
     preds_gam_series.index.to_series().apply(lambda yr: pd.to_datetime(f"{yr}-01-01")),
     preds_gam_series.values, label="ML GAM", marker='p'
-)
-plt.plot(
-    preds_mars_series.index.to_series().apply(lambda yr: pd.to_datetime(f"{yr}-01-01")),
-    preds_mars_series.values, label="ML MARS", marker='*'
 )
 
 # Plot the ensemble prediction.
