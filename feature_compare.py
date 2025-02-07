@@ -14,42 +14,46 @@ from sklearn.gaussian_process.kernels import RBF, WhiteKernel
 
 from pygam import LinearGAM, s
 
-#############################
-# Function: Run Validation Simulation
-#############################
-def run_validation_simulation(train_df, static_feature_list, n_leads=1, val_horizon=20):
+###############################################################################
+# Function: Run Backcasting Simulation (with proper train/validation split)
+###############################################################################
+def run_backcast_simulation(full_df, static_feature_list, n_leads=1, val_horizon=20):
     """
-    For the given training DataFrame (which must include 'year' and 'estimated_deaths')
-    and a list of static predictor column names, this function:
-      1. Creates lead features.
-      2. Prepares training data (and scales it where needed).
-      3. Trains six models:
-         - Linear Regression (with clipping to force nonnegative predictions)
-         - Random Forest
-         - XGBoost
-         - Support Vector Regression (SVR)
-         - Gaussian Process Regression (GPR)
-         - A GAM (trained on a log-transformed target so that back-transformation yields nonnegative predictions)
-      4. Runs a recursive backcasting simulation on the first `val_horizon` years.
-      5. Computes MAE for each model and for an ensemble (weighted inversely by MAE).
-      6. Computes R² for Linear Regression, XGBoost, and GPR (and for the ensemble).
-      7. Returns a dictionary containing these metrics and the prediction series.
-    """
-    # --- 1. Create Lead Features ---
-    for i in range(1, n_leads + 1):
-        train_df[f'lead_{i}'] = train_df['estimated_deaths'].shift(-i)
-    train_df = train_df.dropna().reset_index(drop=True)
-
-    # --- 2. Prepare Training Data ---
-    X_train = train_df[static_feature_list]
-    y_train = train_df['estimated_deaths']
+    Splits the full dataset (which must contain a 'year' column) into:
+      - A validation set: the earliest `val_horizon` years.
+      - A training set: all later years.
     
+    The models are trained only on the training set (after lead feature creation) and then
+    used to backcast the validation years in reverse chronological order.
+    
+    Returns a dictionary containing MAE, R², and prediction series.
+    """
+    # --- 0. Sort the data by year ---
+    df_sorted = full_df.sort_values("year").reset_index(drop=True)
+    
+    # --- 1. Split into Validation and Training Sets ---
+    if len(df_sorted) < (val_horizon + n_leads):
+        raise ValueError("Not enough data to have the specified validation horizon and lead window.")
+    
+    df_val = df_sorted.iloc[:val_horizon].copy()   # validation set: earliest years
+    df_train = df_sorted.iloc[val_horizon:].copy()   # training set: later years
+    
+    # --- 2. Prepare the Training Data: Create Lead Features ---
+    for i in range(1, n_leads + 1):
+        df_train[f'lead_{i}'] = df_train['estimated_deaths'].shift(-i)
+    df_train = df_train.dropna().reset_index(drop=True)
+    
+    X_train = df_train[static_feature_list]
+    y_train = df_train['estimated_deaths']
+    
+    # Scale features and target where needed.
     scaler_X = StandardScaler()
     X_train_scaled = scaler_X.fit_transform(X_train)
+    
     scaler_y = StandardScaler()
     y_train_scaled = scaler_y.fit_transform(y_train.values.reshape(-1, 1)).flatten()
     
-    # --- 3. Train Models ---
+    # --- 3. Train Models on the Training Set ---
     # Linear Regression (scaled)
     lr_model = LinearRegression()
     lr_model.fit(X_train_scaled, y_train_scaled)
@@ -66,7 +70,7 @@ def run_validation_simulation(train_df, static_feature_list, n_leads=1, val_hori
     svr_model = SVR(kernel='rbf', C=1.0, epsilon=0.1)
     svr_model.fit(X_train_scaled, y_train_scaled)
     
-    # GPR (scaled)
+    # Gaussian Process Regression (scaled)
     kernel = RBF(length_scale=1.0) + WhiteKernel(noise_level=1)
     gpr_model = GaussianProcessRegressor(kernel=kernel, random_state=42, n_restarts_optimizer=5)
     gpr_model.fit(X_train_scaled, y_train_scaled)
@@ -79,14 +83,16 @@ def run_validation_simulation(train_df, static_feature_list, n_leads=1, val_hori
     gam_model = LinearGAM(terms)
     gam_model.gridsearch(X_train_scaled, y_train_log)
     
-    # --- 4. Validation Simulation (Recursive Backcasting) ---
-    train_orig = train_df.copy()
-    train_orig.set_index("year", inplace=True)
-    val_years = sorted(train_orig.index)[:val_horizon]
+    # --- 4. Prepare for Backcasting Simulation ---
+    # Initialize a lead window from the first n_leads rows of the training set.
+    df_train_sorted = df_train.sort_values("year").reset_index(drop=True)
+    lead_window_val = df_train_sorted.iloc[:n_leads]['estimated_deaths'].tolist()
     
-    lead_years_val = list(train_orig.index[val_horizon:val_horizon+n_leads])
-    lead_window_val = [train_orig.loc[yr, "estimated_deaths"] for yr in lead_years_val]
+    # Set the validation set index to 'year'
+    df_val = df_val.set_index("year")
+    val_years = sorted(df_val.index)
     
+    # Dictionaries to store predictions.
     preds_lr_val = {}
     preds_rf_val = {}
     preds_xgb_val = {}
@@ -94,20 +100,19 @@ def run_validation_simulation(train_df, static_feature_list, n_leads=1, val_hori
     preds_gpr_val = {}
     preds_gam_val = {}
     
+    # --- 5. Backcasting Simulation (Recursive) ---
     for year in sorted(val_years, reverse=True):
-        static_vals = train_orig.loc[[year], static_feature_list]
-        X_input_df = static_vals.copy()
-        if X_input_df.isnull().any().any():
-            X_input_df = X_input_df.fillna(0)
-        X_input_scaled = scaler_X.transform(X_input_df)
+        static_vals = df_val.loc[[year], static_feature_list]
+        static_vals = static_vals.fillna(0)
+        X_input_scaled = scaler_X.transform(static_vals)
         
-        # LR prediction (clip negatives)
+        # Model predictions.
         pred_lr_scaled = lr_model.predict(X_input_scaled)
         pred_lr_val = scaler_y.inverse_transform(pred_lr_scaled.reshape(-1, 1)).flatten()[0]
         pred_lr_val = max(0, pred_lr_val)
         
-        pred_rf_val = rf_model.predict(X_input_df)[0]
-        pred_xgb_val = xgb_model.predict(X_input_df)[0]
+        pred_rf_val = rf_model.predict(static_vals)[0]
+        pred_xgb_val = xgb_model.predict(static_vals)[0]
         
         pred_svr_scaled = svr_model.predict(X_input_scaled)
         pred_svr_val = scaler_y.inverse_transform(pred_svr_scaled.reshape(-1, 1)).flatten()[0]
@@ -125,17 +130,20 @@ def run_validation_simulation(train_df, static_feature_list, n_leads=1, val_hori
         preds_gpr_val[year] = pred_gpr_val
         preds_gam_val[year] = pred_gam_val
         
+        # Update lead window if needed.
         lead_window_val = [pred_lr_val] + lead_window_val[:-1]
     
-    preds_lr_val_series = pd.Series({yr: preds_lr_val[yr] for yr in sorted(preds_lr_val.keys())})
-    preds_rf_val_series = pd.Series({yr: preds_rf_val[yr] for yr in sorted(preds_rf_val.keys())})
-    preds_xgb_val_series = pd.Series({yr: preds_xgb_val[yr] for yr in sorted(preds_xgb_val.keys())})
-    preds_svr_val_series = pd.Series({yr: preds_svr_val[yr] for yr in sorted(preds_svr_val.keys())})
-    preds_gpr_val_series = pd.Series({yr: preds_gpr_val[yr] for yr in sorted(preds_gpr_val.keys())})
-    preds_gam_val_series = pd.Series({yr: preds_gam_val[yr] for yr in sorted(preds_gam_val.keys())})
+    # Convert prediction dictionaries to Series.
+    preds_lr_val_series   = pd.Series({yr: preds_lr_val[yr]   for yr in sorted(preds_lr_val.keys())})
+    preds_rf_val_series   = pd.Series({yr: preds_rf_val[yr]   for yr in sorted(preds_rf_val.keys())})
+    preds_xgb_val_series  = pd.Series({yr: preds_xgb_val[yr]  for yr in sorted(preds_xgb_val.keys())})
+    preds_svr_val_series  = pd.Series({yr: preds_svr_val[yr]  for yr in sorted(preds_svr_val.keys())})
+    preds_gpr_val_series  = pd.Series({yr: preds_gpr_val[yr]  for yr in sorted(preds_gpr_val.keys())})
+    preds_gam_val_series  = pd.Series({yr: preds_gam_val[yr]  for yr in sorted(preds_gam_val.keys())})
     
-    actual_val = train_orig.loc[preds_lr_val_series.index, "estimated_deaths"]
+    actual_val = df_val.loc[preds_lr_val_series.index, "estimated_deaths"]
     
+    # --- 6. Calculate Metrics ---
     mae_lr  = mean_absolute_error(actual_val, preds_lr_val_series)
     mae_rf  = mean_absolute_error(actual_val, preds_rf_val_series)
     mae_xgb = mean_absolute_error(actual_val, preds_xgb_val_series)
@@ -143,7 +151,6 @@ def run_validation_simulation(train_df, static_feature_list, n_leads=1, val_hori
     mae_gpr = mean_absolute_error(actual_val, preds_gpr_val_series)
     mae_gam = mean_absolute_error(actual_val, preds_gam_val_series)
     
-    # Ensemble weights (using all six models)
     epsilon = 1e-6
     inv_lr  = 1 / (mae_lr  + epsilon)
     inv_rf  = 1 / (mae_rf  + epsilon)
@@ -169,7 +176,6 @@ def run_validation_simulation(train_df, static_feature_list, n_leads=1, val_hori
     
     mae_ensemble = mean_absolute_error(actual_val, ensemble_val_series)
     
-    # Compute R² for LR, XGBoost, and GPR, and also for the ensemble.
     r2_lr  = r2_score(actual_val, preds_lr_val_series)
     r2_xgb = r2_score(actual_val, preds_xgb_val_series)
     r2_gpr = r2_score(actual_val, preds_gpr_val_series)
@@ -195,140 +201,257 @@ def run_validation_simulation(train_df, static_feature_list, n_leads=1, val_hori
     }
     return results
 
-#############################
-# MAIN SCRIPT
-#############################
-# Load training data.
-#train_path = r"/usr/users/quota/students/2021/brapkin/Newspaper/yearly_occurrence_data/training_data_1900_1936.csv"
-train_path = r"yearly_occurrence_data/training_data_1900_1936.csv"
+###############################################################################
+# Function: Run In-Sample Fit Simulation (Train on Entire Dataset)
+###############################################################################
+def run_full_fit_simulation(full_df, static_feature_list, n_leads=1):
+    """
+    Trains models on the entire dataset (after creating lead features) and then
+    produces in-sample predictions for all available years (i.e. the fitted values).
+    Returns a dictionary with predictions, the actual target, and performance metrics.
+    """
+    # --- 0. Sort Data and Create Lead Features ---
+    df_sorted = full_df.sort_values("year").reset_index(drop=True)
+    for i in range(1, n_leads + 1):
+        df_sorted[f'lead_{i}'] = df_sorted['estimated_deaths'].shift(-i)
+    df_model = df_sorted.dropna().reset_index(drop=True)
+    
+    # --- 1. Prepare Data ---
+    X = df_model[static_feature_list]
+    y = df_model['estimated_deaths']
+    
+    scaler_X = StandardScaler()
+    X_scaled = scaler_X.fit_transform(X)
+    
+    scaler_y = StandardScaler()
+    y_scaled = scaler_y.fit_transform(y.values.reshape(-1, 1)).flatten()
+    
+    # --- 2. Train Models on the Entire Dataset ---
+    # Linear Regression (scaled)
+    lr_model = LinearRegression()
+    lr_model.fit(X_scaled, y_scaled)
+    
+    # Random Forest (unscaled)
+    rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+    rf_model.fit(X, y)
+    
+    # XGBoost (unscaled)
+    xgb_model = xgb.XGBRegressor(n_estimators=100, random_state=42)
+    xgb_model.fit(X, y)
+    
+    # SVR (scaled)
+    svr_model = SVR(kernel='rbf', C=1.0, epsilon=0.1)
+    svr_model.fit(X_scaled, y_scaled)
+    
+    # Gaussian Process Regression (scaled)
+    kernel = RBF(length_scale=1.0) + WhiteKernel(noise_level=1)
+    gpr_model = GaussianProcessRegressor(kernel=kernel, random_state=42, n_restarts_optimizer=5)
+    gpr_model.fit(X_scaled, y_scaled)
+    
+    # GAM (scaled) with log-transformed target
+    y_log = np.log(y + 1)
+    terms = s(0)
+    for i in range(1, X_scaled.shape[1]):
+        terms += s(i)
+    gam_model = LinearGAM(terms)
+    gam_model.gridsearch(X_scaled, y_log)
+    
+    # --- 3. Compute In-Sample Predictions ---
+    preds_lr_scaled = lr_model.predict(X_scaled)
+    preds_lr = scaler_y.inverse_transform(preds_lr_scaled.reshape(-1, 1)).flatten()
+    preds_lr = np.maximum(0, preds_lr)  # clip negatives
+    
+    preds_rf = rf_model.predict(X)
+    preds_xgb = xgb_model.predict(X)
+    
+    preds_svr_scaled = svr_model.predict(X_scaled)
+    preds_svr = scaler_y.inverse_transform(preds_svr_scaled.reshape(-1, 1)).flatten()
+    
+    preds_gpr_scaled = gpr_model.predict(X_scaled)
+    preds_gpr = scaler_y.inverse_transform(preds_gpr_scaled.reshape(-1, 1)).flatten()
+    
+    preds_gam_log = gam_model.predict(X_scaled)
+    preds_gam = np.exp(preds_gam_log) - 1
+    
+    # --- 4. Create Ensemble Prediction (Weights computed on in-sample MAE) ---
+    mae_lr  = mean_absolute_error(y, preds_lr)
+    mae_rf  = mean_absolute_error(y, preds_rf)
+    mae_xgb = mean_absolute_error(y, preds_xgb)
+    mae_svr = mean_absolute_error(y, preds_svr)
+    mae_gpr = mean_absolute_error(y, preds_gpr)
+    mae_gam = mean_absolute_error(y, preds_gam)
+    
+    epsilon = 1e-6
+    inv_lr  = 1 / (mae_lr  + epsilon)
+    inv_rf  = 1 / (mae_rf  + epsilon)
+    inv_xgb = 1 / (mae_xgb + epsilon)
+    inv_svr = 1 / (mae_svr + epsilon)
+    inv_gpr = 1 / (mae_gpr + epsilon)
+    inv_gam = 1 / (mae_gam + epsilon)
+    total_inv = inv_lr + inv_rf + inv_xgb + inv_svr + inv_gpr + inv_gam
+    
+    w_lr  = inv_lr  / total_inv
+    w_rf  = inv_rf  / total_inv
+    w_xgb = inv_xgb / total_inv
+    w_svr = inv_svr / total_inv
+    w_gpr = inv_gpr / total_inv
+    w_gam = inv_gam / total_inv
+    
+    ensemble = (w_lr * preds_lr + w_rf * preds_rf + w_xgb * preds_xgb +
+                w_svr * preds_svr + w_gpr * preds_gpr + w_gam * preds_gam)
+    
+    # --- 5. Compute Performance Metrics ---
+    mae_ensemble = mean_absolute_error(y, ensemble)
+    r2_ensemble = r2_score(y, ensemble)
+    mae_lr = mean_absolute_error(y, preds_lr)
+    r2_lr = r2_score(y, preds_lr)
+    
+    results = {
+        "years": df_model["year"] if "year" in df_model.columns else df_sorted["year"].iloc[:-n_leads],
+        "actual": y,
+        "preds_lr": preds_lr,
+        "ensemble": ensemble,
+        "mae_lr": mae_lr,
+        "r2_lr": r2_lr,
+        "mae_ensemble": mae_ensemble,
+        "r2_ensemble": r2_ensemble
+    }
+    return results
 
+###############################################################################
+# MAIN SCRIPT
+###############################################################################
+# Load training data.
+# (Uncomment/adjust the path below if needed.)
+# train_path = r"/usr/users/quota/students/2021/brapkin/Newspaper/yearly_occurrence_data/training_data_1900_1936.csv"
+train_path = r"yearly_occurrence_data/training_data_1900_1936.csv"
 train_df = pd.read_csv(train_path)
 train_df = train_df.sort_values("year").reset_index(drop=True)
 
 # Identify all static predictors (exclude 'year', 'estimated_deaths', and any lead columns).
 static_cols = [col for col in train_df.columns if col not in ["year", "estimated_deaths"] and not col.startswith("lead_")]
 
-# --- Define Feature Groups ---
-# Group 1: All features whose names contain smallpox ratios.
-group1_features = [col for col in static_cols if ("smallpox_sick_cooccurrences_ratio" in col) or 
-                                                  ("smallpox_epidemic_cooccurrences_ratio" in col)]
-# Group 2 (unused): All other features.
-group2_features = [col for col in static_cols if col not in group1_features]
+# Limit the maximum number of features used in some groups.
+max_features_to_use = 8
 
-# Group 3: Top n most important features from Group 2, where n is the number of features in Group 1.
-n = len(group1_features)
-if n > 0 and len(group2_features) > 0:
-    rf_importance = RandomForestRegressor(n_estimators=100, random_state=42)
-    rf_importance.fit(train_df[group2_features], train_df['estimated_deaths'])
-    importances = rf_importance.feature_importances_
-    imp_df = pd.DataFrame({"feature": group2_features, "importance": importances})
-    imp_df = imp_df.sort_values("importance", ascending=False)
-    group3_features = imp_df["feature"].tolist()[:n]
-else:
-    group3_features = []
+# --- Define Predictor Groups with Intuitive Names ---
+# Group A: Smallpox Co‑occurrence Ratios.
+groupA = [col for col in static_cols 
+          if col.startswith("smallpox_") and "cooccurrences_ratio" in col]
+if max_features_to_use is not None and len(groupA) > max_features_to_use:
+    rf_importance_A = RandomForestRegressor(n_estimators=100, random_state=42)
+    rf_importance_A.fit(train_df[groupA], train_df['estimated_deaths'])
+    importances_A = rf_importance_A.feature_importances_
+    imp_df_A = pd.DataFrame({"feature": groupA, "importance": importances_A})
+    imp_df_A = imp_df_A.sort_values("importance", ascending=False)
+    groupA = imp_df_A["feature"].tolist()[:max_features_to_use]
 
-print("Group 1 features (smallpox ratios):", group1_features)
-print("Group 3 features (top {} non-smallpox features):".format(n), group3_features)
+# Let n be the number of features in Group A.
+n = len(groupA)
 
-# Run validation simulation for Group 1 and Group 3.
-results_group1 = run_validation_simulation(train_df.copy(), group1_features, n_leads=1, val_horizon=20)
-results_group3 = run_validation_simulation(train_df.copy(), group3_features, n_leads=1, val_horizon=20)
+# Group B: Top Overall Features (from all predictors).
+rf_importance_all = RandomForestRegressor(n_estimators=100, random_state=42)
+rf_importance_all.fit(train_df[static_cols], train_df['estimated_deaths'])
+importances_all = rf_importance_all.feature_importances_
+imp_df_all = pd.DataFrame({"feature": static_cols, "importance": importances_all})
+imp_df_all = imp_df_all.sort_values("importance", ascending=False)
+groupB = imp_df_all["feature"].tolist()[:n]
 
-# Print MAE and R² results.
-print("\n--- Group 1 (smallpox ratios) ---")
-print("Ensemble: MAE = {:.3f}, R² = {:.3f}".format(results_group1["mae_ensemble"], results_group1["r2_ensemble"]))
-print("Linear Regression: MAE = {:.3f}, R² = {:.3f}".format(results_group1["mae_lr"], results_group1["r2_lr"]))
-print("XGBoost:           MAE = {:.3f}, R² = {:.3f}".format(results_group1["mae_xgb"], results_group1["r2_xgb"]))
-print("GPR:               MAE = {:.3f}, R² = {:.3f}".format(results_group1["mae_gpr"], results_group1["r2_gpr"]))
+# Group C: Top Non‑Smallpox Features.
+non_smallpox_candidates = [col for col in static_cols 
+                           if not (col.startswith("smallpox_") and ("cooccurrence" in col or "cooccurence" in col))]
+rf_importance_non_smallpox = RandomForestRegressor(n_estimators=100, random_state=42)
+rf_importance_non_smallpox.fit(train_df[non_smallpox_candidates], train_df['estimated_deaths'])
+importances_non_smallpox = rf_importance_non_smallpox.feature_importances_
+imp_df_non_smallpox = pd.DataFrame({"feature": non_smallpox_candidates, "importance": importances_non_smallpox})
+imp_df_non_smallpox = imp_df_non_smallpox.sort_values("importance", ascending=False)
+groupC = imp_df_non_smallpox["feature"].tolist()[:n]
 
-print("\n--- Group 3 (top n non-smallpox features) ---")
-print("Ensemble: MAE = {:.3f}, R² = {:.3f}".format(results_group3["mae_ensemble"], results_group3["r2_ensemble"]))
-print("Linear Regression: MAE = {:.3f}, R² = {:.3f}".format(results_group3["mae_lr"], results_group3["r2_lr"]))
-print("XGBoost:           MAE = {:.3f}, R² = {:.3f}".format(results_group3["mae_xgb"], results_group3["r2_xgb"]))
-print("GPR:               MAE = {:.3f}, R² = {:.3f}".format(results_group3["mae_gpr"], results_group3["r2_gpr"]))
+# Assign intuitive names.
+groupA_name = "Smallpox Co‑occurrence Ratios"
+groupB_name = "Top Overall Features"       # (will appear rightmost)
+groupC_name = "Top Non‑Smallpox Features"
 
-#############################
-# TIME SERIES PREDICTION GRAPHS (Group 1 and Group 3)
-#############################
-plt.figure(figsize=(14, 6))
+print(f"{groupA_name}: {len(groupA)} features")
+print("Features:", groupA)
+print(f"{groupC_name}: {len(groupC)} features")
+print("Features:", groupC)
+print(f"{groupB_name}: {len(groupB)} features")
+print("Features:", groupB)
 
-# Group 1: Smallpox ratios
-plt.subplot(1, 2, 1)
-plt.plot(results_group1["actual_series"].index, results_group1["actual_series"].values, 
-         label="Actual", marker='o', color='black')
-plt.plot(results_group1["ensemble_series"].index, results_group1["ensemble_series"].values, 
-         label="Ensemble", marker='s', color='blue')
-plt.plot(results_group1["preds_lr_val_series"].index, results_group1["preds_lr_val_series"].values, 
-         label="Linear Regression", marker='x', color='red')
-plt.plot(results_group1["preds_xgb_val_series"].index, results_group1["preds_xgb_val_series"].values, 
-         label="XGBoost", marker='^', color='green')
-plt.plot(results_group1["preds_gpr_val_series"].index, results_group1["preds_gpr_val_series"].values, 
-         label="GPR", marker='D', color='purple')
-plt.title("Group 1: Smallpox Ratios")
-plt.xlabel("Year")
-plt.ylabel("Estimated Deaths")
-plt.legend()
-plt.grid(True)
+# --- Run Backcasting Simulation for All Three Groups (for out-of-sample performance) ---
+results_A = run_backcast_simulation(train_df.copy(), groupA, n_leads=1, val_horizon=20)
+results_B = run_backcast_simulation(train_df.copy(), groupB, n_leads=1, val_horizon=20)
+results_C = run_backcast_simulation(train_df.copy(), groupC, n_leads=1, val_horizon=20)
 
-# Group 3: Top n non‑smallpox features
-plt.subplot(1, 2, 2)
-plt.plot(results_group3["actual_series"].index, results_group3["actual_series"].values, 
-         label="Actual", marker='o', color='black')
-plt.plot(results_group3["ensemble_series"].index, results_group3["ensemble_series"].values, 
-         label="Ensemble", marker='s', color='blue')
-plt.plot(results_group3["preds_lr_val_series"].index, results_group3["preds_lr_val_series"].values, 
-         label="Linear Regression", marker='x', color='red')
-plt.plot(results_group3["preds_xgb_val_series"].index, results_group3["preds_xgb_val_series"].values, 
-         label="XGBoost", marker='^', color='green')
-plt.plot(results_group3["preds_gpr_val_series"].index, results_group3["preds_gpr_val_series"].values, 
-         label="GPR", marker='D', color='purple')
-plt.title("Group 3: Top {} Non‑Smallpox Features".format(n))
-plt.xlabel("Year")
-plt.ylabel("Estimated Deaths")
-plt.legend()
-plt.grid(True)
+# Print out-of-sample performance metrics.
+print("\n--- Out-of-Sample Performance Metrics (Backcasting) ---")
+print(f"{groupA_name} - Ensemble: MAE = {results_A['mae_ensemble']:.3f}, R² = {results_A['r2_ensemble']:.3f}")
+print(f"{groupA_name} - Linear Regression: MAE = {results_A['mae_lr']:.3f}, R² = {results_A['r2_lr']:.3f}")
 
-plt.tight_layout()
-plt.show()
+print(f"{groupC_name} - Ensemble: MAE = {results_C['mae_ensemble']:.3f}, R² = {results_C['r2_ensemble']:.3f}")
+print(f"{groupC_name} - Linear Regression: MAE = {results_C['mae_lr']:.3f}, R² = {results_C['r2_lr']:.3f}")
 
-#############################
-# BAR CHARTS FOR MAE and R²
-#############################
-# Prepare data for bar charts.
-models = ["LR", "XGBoost", "GPR", "Ensemble"]
+print(f"{groupB_name} - Ensemble: MAE = {results_B['mae_ensemble']:.3f}, R² = {results_B['r2_ensemble']:.3f}")
+print(f"{groupB_name} - Linear Regression: MAE = {results_B['mae_lr']:.3f}, R² = {results_B['r2_lr']:.3f}")
 
-# MAE values
-mae_group1 = [results_group1["mae_lr"], results_group1["mae_xgb"], results_group1["mae_gpr"], results_group1["mae_ensemble"]]
-mae_group3 = [results_group3["mae_lr"], results_group3["mae_xgb"], results_group3["mae_gpr"], results_group3["mae_ensemble"]]
+###############################################################################
+# In-Sample Fit: Train on Entire Dataset and Evaluate Model Fit
+###############################################################################
+fit_A = run_full_fit_simulation(train_df.copy(), groupA, n_leads=1)
+fit_B = run_full_fit_simulation(train_df.copy(), groupB, n_leads=1)
+fit_C = run_full_fit_simulation(train_df.copy(), groupC, n_leads=1)
 
-# R² values
-r2_group1 = [results_group1["r2_lr"], results_group1["r2_xgb"], results_group1["r2_gpr"], results_group1["r2_ensemble"]]
-r2_group3 = [results_group3["r2_lr"], results_group3["r2_xgb"], results_group3["r2_gpr"], results_group3["r2_ensemble"]]
+# Print in-sample (entire dataset) performance metrics for the linear models.
+print("\n--- In-Sample Fit Metrics (Trained on Entire Dataset) ---")
+print(f"{groupA_name} - Linear Regression: MAE = {fit_A['mae_lr']:.3f}, R² = {fit_A['r2_lr']:.3f}")
+print(f"{groupA_name} - Ensemble: MAE = {fit_A['mae_ensemble']:.3f}, R² = {fit_A['r2_ensemble']:.3f}")
 
-x = np.arange(len(models))  # the label locations
-width = 0.35  # the width of the bars
+print(f"{groupC_name} - Linear Regression: MAE = {fit_C['mae_lr']:.3f}, R² = {fit_C['r2_lr']:.3f}")
+print(f"{groupC_name} - Ensemble: MAE = {fit_C['mae_ensemble']:.3f}, R² = {fit_C['r2_ensemble']:.3f}")
 
-fig, axs = plt.subplots(1, 2, figsize=(14, 6))
+print(f"{groupB_name} - Linear Regression: MAE = {fit_B['mae_lr']:.3f}, R² = {fit_B['r2_lr']:.3f}")
+print(f"{groupB_name} - Ensemble: MAE = {fit_B['mae_ensemble']:.3f}, R² = {fit_B['r2_ensemble']:.3f}")
 
-# MAE bar chart
-axs[0].bar(x - width/2, mae_group1, width, label="Group 1", color='skyblue')
-axs[0].bar(x + width/2, mae_group3, width, label="Group 3", color='salmon')
-axs[0].set_ylabel("MAE")
-axs[0].set_title("MAE by Model and Feature Group")
-axs[0].set_xticks(x)
-axs[0].set_xticklabels(models)
+###############################################################################
+# Plot In-Sample Model Fit (Actual vs. Predictions) for Each Predictor Group
+###############################################################################
+fig, axs = plt.subplots(1, 3, figsize=(18, 6))
+
+# For clarity, we plot:
+#   - The actual series (black solid line)
+#   - The ensemble prediction (blue dashed line)
+#   - The linear regression prediction (red dotted line)
+
+# Group A: Smallpox Co‑occurrence Ratios.
+axs[0].plot(fit_A["years"], fit_A["actual"], label="Actual", marker='o', color='black')
+axs[0].plot(fit_A["years"], fit_A["ensemble"], label="Ensemble", linestyle='--', color='blue')
+axs[0].plot(fit_A["years"], fit_A["preds_lr"], label="Linear Regression", linestyle=':', color='red')
+axs[0].set_title(groupA_name)
+axs[0].set_xlabel("Year")
+axs[0].set_ylabel("Estimated Deaths")
 axs[0].legend()
-axs[0].grid(axis='y')
+axs[0].grid(True)
 
-# R² bar chart
-axs[1].bar(x - width/2, r2_group1, width, label="Group 1", color='skyblue')
-axs[1].bar(x + width/2, r2_group3, width, label="Group 3", color='salmon')
-axs[1].set_ylabel("R²")
-axs[1].set_title("R² by Model and Feature Group")
-axs[1].set_xticks(x)
-axs[1].set_xticklabels(models)
+# Group C: Top Non‑Smallpox Features.
+axs[1].plot(fit_C["years"], fit_C["actual"], label="Actual", marker='o', color='black')
+axs[1].plot(fit_C["years"], fit_C["ensemble"], label="Ensemble", linestyle='--', color='blue')
+axs[1].plot(fit_C["years"], fit_C["preds_lr"], label="Linear Regression", linestyle=':', color='red')
+axs[1].set_title(groupC_name)
+axs[1].set_xlabel("Year")
+axs[1].set_ylabel("Estimated Deaths")
 axs[1].legend()
-axs[1].grid(axis='y')
+axs[1].grid(True)
+
+# Group B: Top Overall Features.
+axs[2].plot(fit_B["years"], fit_B["actual"], label="Actual", marker='o', color='black')
+axs[2].plot(fit_B["years"], fit_B["ensemble"], label="Ensemble", linestyle='--', color='blue')
+axs[2].plot(fit_B["years"], fit_B["preds_lr"], label="Linear Regression", linestyle=':', color='red')
+axs[2].set_title(groupB_name)
+axs[2].set_xlabel("Year")
+axs[2].set_ylabel("Estimated Deaths")
+axs[2].legend()
+axs[2].grid(True)
 
 plt.tight_layout()
 plt.show()
