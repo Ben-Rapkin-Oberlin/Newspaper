@@ -519,7 +519,9 @@ def main():
         num_processes=num_processes,
         sample_percentage=sample_percentage,
         cooccur_anchor='smallpox',        # anchor word
-        extra_cooccur_targets=['death','pandemic', 'burial', 'outbreak', 'sick', 'died', 'plague', 'epidemic']   # additional words to count alongside the anchor
+        extra_cooccur_targets['outbreak', 'epidemic', 'death', 'died', 'mortality', 'sick', 'kill', 'pandemic', 
+            'endemic', 'plague', 'burial', 'grave', 'obituary', 'case', 'fatality', 'deceased', 'casualty', 
+            'perish', 'afflicted', 'victim', 'succumb', 'infection', 'disease', 'contagion', 'suffering']
     )
 
     start_year = 1915
