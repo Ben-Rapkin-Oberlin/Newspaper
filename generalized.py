@@ -515,13 +515,14 @@ def main():
     print(f"- Sample percentage: {sample_percentage}%")
     # You can change the co-occurrence anchor and extra target words here.
     analyzer = TemporalLDAAnalyzer(
+        extra_cooccur_targets['outbreak', 'epidemic', 'death', 'died', 'mortality', 'sick', 'kill', 'pandemic', 
+            'endemic', 'plague', 'burial', 'grave', 'obituary', 'case', 'fatality', 'deceased', 'casualty', 
+            'perish', 'afflicted', 'victim', 'succumb', 'infection', 'disease', 'contagion', 'suffering']
         window_size=window_size,
         num_processes=num_processes,
         sample_percentage=sample_percentage,
         cooccur_anchor='smallpox',        # anchor word
-        extra_cooccur_targets['outbreak', 'epidemic', 'death', 'died', 'mortality', 'sick', 'kill', 'pandemic', 
-            'endemic', 'plague', 'burial', 'grave', 'obituary', 'case', 'fatality', 'deceased', 'casualty', 
-            'perish', 'afflicted', 'victim', 'succumb', 'infection', 'disease', 'contagion', 'suffering']
+  
     )
 
     start_year = 1915
