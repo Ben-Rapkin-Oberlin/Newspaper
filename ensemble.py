@@ -19,8 +19,8 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel
 
 # Generalized Additive Model (GAM) using pyGAM
-from pygam import LinearGAM, s
-
+#from pygam import LinearGAM, s
+from pygam import PoissonGAM, s
 # ---------------------------
 # User-Defined Settings
 # ---------------------------
@@ -111,9 +111,10 @@ gpr_model.fit(X_train_ml_scaled, y_train_ml_scaled)
 terms = s(0)
 for i in range(1, X_train_ml_scaled.shape[1]):
     terms += s(i)
-gam_model = LinearGAM(terms)
-# Optimize the smoothing parameters using grid search.
-gam_model.gridsearch(X_train_ml_scaled, y_train_ml_scaled)
+# Use PoissonGAM on the raw target data
+gam_model = PoissonGAM(terms)
+gam_model.gridsearch(X_train_ml_scaled, y_train_ml
+
 
 # ---------------------------
 # 2d. Compute and Print Training R² Values
